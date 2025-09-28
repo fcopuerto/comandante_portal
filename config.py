@@ -18,7 +18,8 @@ SERVERS = [
         'name': 'ubutwo.cobaltax.local',
         'ip': '192.168.23.42',
         'ssh_user': 'administrador',
-        'ssh_password_env': 'SSH_PASS_UBUTWO',  # env var holding password (optional)
+        # env var holding password (optional)
+        'ssh_password_env': 'SSH_PASS_UBUTWO',
         'ssh_key_path': None,
         'ssh_port': 22,
         'os_type': 'linux',

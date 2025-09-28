@@ -8,8 +8,12 @@ set -euo pipefail
 # Load dotenv if present
 if [ -f .env ]; then
 	echo "Loading environment from .env"
-	# shellcheck disable=SC2046
-	export $(grep -v '^#' .env | grep -v '^$' | cut -d= -f1)
+	# Robust, POSIX-safe: export all variables defined in .env (no spaces around '=')
+	# Supports comments (#) and blank lines.
+	set -o allexport
+	# shellcheck disable=SC1091
+	. ./.env
+	set +o allexport
 fi
 
 echo "Optionally run: python scripts/telegram_login.py (first time to create session)"

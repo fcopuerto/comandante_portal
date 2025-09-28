@@ -142,7 +142,8 @@ class SSHManager:
             return False, f"SSH connection failed: {error}"
         try:
             os_type = server_config.get('os_type', 'linux').lower()
-            ssh_password = server_config.get('ssh_password') or os.environ.get(server_config.get('ssh_password_env') or '')
+            ssh_password = server_config.get('ssh_password') or os.environ.get(
+                server_config.get('ssh_password_env') or '')
             if os_type == 'windows':
                 return self._restart_windows_server(client, ssh_password)
             else:
@@ -443,7 +444,8 @@ class SSHManager:
                 return True, "User has passwordless sudo privileges"
             else:
                 # Check if user has sudo with password
-                ssh_password = server_config.get('ssh_password') or os.environ.get(server_config.get('ssh_password_env') or '')
+                ssh_password = server_config.get('ssh_password') or os.environ.get(
+                    server_config.get('ssh_password_env') or '')
                 if ssh_password:
                     # Test sudo with password
                     stdin, stdout, stderr = client.exec_command(
