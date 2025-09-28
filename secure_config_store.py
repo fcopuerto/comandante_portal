@@ -46,7 +46,9 @@ from __future__ import annotations
 import os
 import sqlite3
 import base64
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple, Any
+import json
+import threading
 
 try:
     from cryptography.fernet import Fernet
@@ -57,6 +59,89 @@ except Exception:  # cryptography not installed yet
 DB_PATH = os.environ.get('COBALTAX_CONFIG_DB', 'config_store.sqlite')
 KEY_FILE = '.config_master.key'
 KEY_ENV = 'CONFIG_MASTER_KEY'
+CACHE_PATH = os.environ.get('COBALTAX_CONFIG_CACHE', 'config_cache.json')
+
+_CACHE_LOCK = threading.Lock()
+
+
+# ------------- Cache Helpers -------------
+def _cache_write(servers: List[Dict[str, Any]], users: List[Tuple[str, Optional[str], bool]]):
+    """Persist a cache copy so we can operate if the DB becomes unavailable.
+
+    Passwords are re-encrypted (ciphertext base64) if encryption available; else
+    they are stored in plaintext (last resort)."""
+    try:
+        cipher = _get_cipher()
+        ser_servers = []
+        for s in servers:
+            pwd = s.get('ssh_password')
+            if pwd and cipher:
+                try:
+                    enc = cipher.encrypt(pwd.encode('utf-8')).decode('utf-8')
+                except Exception:
+                    enc = pwd
+            else:
+                enc = pwd
+            ser_servers.append({
+                'name': s.get('name'), 'ip': s.get('ip'), 'ssh_user': s.get('ssh_user'),
+                'ssh_password': enc, 'ssh_port': s.get('ssh_port', 22), 'os_type': s.get('os_type', 'linux'),
+                'parent': s.get('parent'), 'ssh_key_path': s.get('ssh_key_path'), 'enc': bool(cipher)
+            })
+        ser_users = []
+        for u, pw, is_admin in users:
+            if pw and cipher:
+                try:
+                    enc_pw = cipher.encrypt(pw.encode('utf-8')).decode('utf-8')
+                except Exception:
+                    enc_pw = pw
+            else:
+                enc_pw = pw
+            ser_users.append({'username': u, 'password': enc_pw,
+                             'is_admin': is_admin, 'enc': bool(cipher)})
+        payload = {'version': 1, 'servers': ser_servers, 'users': ser_users}
+        with _CACHE_LOCK:
+            with open(CACHE_PATH, 'w', encoding='utf-8') as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+    except Exception as e:  # pragma: no cover - best effort
+        print(f"[secure_config_store] cache write failed: {e}")
+
+
+def _cache_load() -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    """Return (servers, users_map) from cache or ([],{})."""
+    try:
+        if not os.path.exists(CACHE_PATH):
+            return [], {}
+        with _CACHE_LOCK:
+            with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        cipher = _get_cipher()
+        servers: List[Dict[str, Any]] = []
+        for s in data.get('servers', []):
+            pwd = s.get('ssh_password')
+            if pwd and s.get('enc') and cipher:
+                try:
+                    pwd = cipher.decrypt(pwd.encode('utf-8')).decode('utf-8')
+                except Exception:
+                    pass
+            servers.append({
+                'name': s.get('name'), 'ip': s.get('ip'), 'ssh_user': s.get('ssh_user'),
+                'ssh_password': pwd, 'ssh_password_env': None, 'ssh_port': s.get('ssh_port', 22),
+                'os_type': s.get('os_type', 'linux'), 'parent': s.get('parent'), 'ssh_key_path': s.get('ssh_key_path')
+            })
+        users_map: Dict[str, Dict[str, Any]] = {}
+        for u in data.get('users', []):
+            pw = u.get('password')
+            if pw and u.get('enc') and cipher:
+                try:
+                    pw = cipher.decrypt(pw.encode('utf-8')).decode('utf-8')
+                except Exception:
+                    pass
+            users_map[u.get('username')] = {
+                'password': pw, 'is_admin': bool(u.get('is_admin'))}
+        return servers, users_map
+    except Exception as e:  # pragma: no cover
+        print(f"[secure_config_store] cache load failed: {e}")
+        return [], {}
 
 
 # ------------- Encryption Helpers -------------
@@ -74,7 +159,8 @@ def _ensure_key() -> Optional[bytes]:
     if os.path.exists(KEY_FILE):
         with open(KEY_FILE, 'rb') as f:
             key = f.read().strip()
-            os.environ[KEY_ENV] = key.decode() if isinstance(key, bytes) else key
+            os.environ[KEY_ENV] = key.decode(
+            ) if isinstance(key, bytes) else key
             return key
     # Generate new key
     key = Fernet.generate_key()
@@ -212,7 +298,12 @@ def _maybe_migrate_from_config():
 
 # ------------- Public Accessors -------------
 def load_servers() -> List[Dict[str, any]]:
-    conn = _get_conn()
+    try:
+        conn = _get_conn()
+    except Exception as e:
+        print(f"[secure_config_store] DB open failed, using cache: {e}")
+        servers, _ = _cache_load()
+        return servers
     servers: List[Dict[str, any]] = []
     try:
         cur = conn.cursor()
@@ -230,47 +321,115 @@ def load_servers() -> List[Dict[str, any]]:
                 'parent': parent_ip,
                 'ssh_key_path': key_path
             })
+    except Exception as e:
+        print(f"[secure_config_store] query servers failed, using cache: {e}")
+        servers, _ = _cache_load()
+        return servers
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
+    # update cache (need user data to keep aligned)
+    try:
+        users = _list_users_with_pw()
+        _cache_write(servers, users)
+    except Exception:
+        pass
     return servers
 
 
 def get_user_password(username: str) -> Optional[str]:
-    conn = _get_conn()
+    try:
+        conn = _get_conn()
+    except Exception:
+        # fallback to cache
+        _, users_map = _cache_load()
+        entry = users_map.get(username)
+        return entry.get('password') if entry else None
     try:
         cur = conn.cursor()
-        cur.execute('SELECT password_enc FROM auth_users WHERE username = ?', (username,))
+        cur.execute(
+            'SELECT password_enc FROM auth_users WHERE username = ?', (username,))
         row = cur.fetchone()
         if not row:
             return None
         enc = row[0]
         return decrypt_text(enc) if enc else None
+    except Exception as e:
+        print(
+            f"[secure_config_store] user password query failed, using cache: {e}")
+        _, users_map = _cache_load()
+        entry = users_map.get(username)
+        return entry.get('password') if entry else None
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def list_users() -> List[str]:
-    conn = _get_conn()
+    try:
+        conn = _get_conn()
+    except Exception:
+        _, users_map = _cache_load()
+        return sorted(users_map.keys())
     try:
         cur = conn.cursor()
-        return [r[0] for r in cur.execute('SELECT username FROM auth_users ORDER BY username').fetchall()]
+        rows = cur.execute(
+            'SELECT username FROM auth_users ORDER BY username').fetchall()
+        names = [r[0] for r in rows]
+    except Exception as e:
+        print(f"[secure_config_store] list_users failed, using cache: {e}")
+        _, users_map = _cache_load()
+        names = sorted(users_map.keys())
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return names
 
 
 def is_admin(username: str) -> bool:
-    conn = _get_conn()
+    try:
+        conn = _get_conn()
+    except Exception:
+        _, users_map = _cache_load()
+        entry = users_map.get(username)
+        return bool(entry and entry.get('is_admin'))
     try:
         cur = conn.cursor()
-        cur.execute('SELECT is_admin FROM auth_users WHERE username = ?', (username,))
+        cur.execute(
+            'SELECT is_admin FROM auth_users WHERE username = ?', (username,))
         row = cur.fetchone()
         return bool(row and row[0])
+    except Exception as e:
+        print(f"[secure_config_store] is_admin failed, using cache: {e}")
+        _, users_map = _cache_load()
+        entry = users_map.get(username)
+        return bool(entry and entry.get('is_admin'))
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def upsert_user(username: str, password: Optional[str], is_admin_flag: bool = False):
-    conn = _get_conn()
+    try:
+        conn = _get_conn()
+    except Exception as e:
+        print(
+            f"[secure_config_store] upsert_user DB open failed (cache only): {e}")
+        # mutate cache directly (load existing + overwrite)
+        servers, users_map = _cache_load()
+        users_map[username] = {'password': password, 'is_admin': is_admin_flag}
+        users_list = [(u, v.get('password'), v.get('is_admin'))
+                      for u, v in users_map.items()]
+        _cache_write(servers, users_list)
+        return
     try:
         cur = conn.cursor()
         enc = encrypt_text(password) if password else None
@@ -283,11 +442,39 @@ def upsert_user(username: str, password: Optional[str], is_admin_flag: bool = Fa
         ''', (username, enc, 1 if is_admin_flag else 0))
         conn.commit()
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
+    # refresh cache
+    try:
+        servers = load_servers()
+        users = _list_users_with_pw()
+        _cache_write(servers, users)
+    except Exception:
+        pass
 
 
 def upsert_server(server: Dict[str, any]):
-    conn = _get_conn()
+    try:
+        conn = _get_conn()
+    except Exception as e:
+        print(
+            f"[secure_config_store] upsert_server DB open failed (cache only): {e}")
+        servers, users_map = _cache_load()
+        # replace or append
+        updated = False
+        for i, s in enumerate(servers):
+            if s.get('ip') == server.get('ip'):
+                servers[i] = {**s, **server}
+                updated = True
+                break
+        if not updated:
+            servers.append(server)
+        users_list = [(u, v.get('password'), v.get('is_admin'))
+                      for u, v in users_map.items()]
+        _cache_write(servers, users_list)
+        return
     try:
         cur = conn.cursor()
         pwd = server.get('ssh_password')
@@ -310,7 +497,40 @@ def upsert_server(server: Dict[str, any]):
         ))
         conn.commit()
     finally:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
+    # refresh cache
+    try:
+        servers = load_servers()
+        users = _list_users_with_pw()
+        _cache_write(servers, users)
+    except Exception:
+        pass
+
+
+def _list_users_with_pw() -> List[Tuple[str, Optional[str], bool]]:
+    """Internal helper to extract (username,password,is_admin) from DB (no cache fallback)."""
+    out: List[Tuple[str, Optional[str], bool]] = []
+    try:
+        conn = _get_conn()
+    except Exception:
+        return out
+    try:
+        cur = conn.cursor()
+        for row in cur.execute('SELECT username, password_enc, is_admin FROM auth_users'):
+            uname, pw_enc, adm = row
+            out.append((uname, decrypt_text(pw_enc)
+                       if pw_enc else None, bool(adm)))
+    except Exception:
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return out
 
 
 # Initialize database (non-migrating by default when imported elsewhere).  The
