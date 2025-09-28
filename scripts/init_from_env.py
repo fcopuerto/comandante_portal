@@ -18,6 +18,7 @@ variables (unless you add new servers/users; use upsert helpers or rerun).
 from __future__ import annotations
 import os
 import sys
+import argparse
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(CURRENT_DIR)
 if ROOT_DIR not in sys.path:
@@ -35,6 +36,48 @@ except ModuleNotFoundError as e:  # pragma: no cover
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Seal environment variables into encrypted SQLite store")
+    parser.add_argument('--env-file', dest='env_file', help='Explicit .env file to load (defaults: .env, _.env)', default=None)
+    args = parser.parse_args()
+
+    def load_env_file(path: str):
+        if not os.path.exists(path):
+            return False
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if '=' not in line:
+                        continue
+                    k, v = line.split('=', 1)
+                    k = k.strip(); v = v.strip()
+                    # Don't override already exported values (caller precedence)
+                    if k and v and k not in os.environ:
+                        os.environ[k] = v
+            return True
+        except Exception as e:
+            print(f"Warning: failed to parse env file {path}: {e}")
+            return False
+
+    # Load env file(s) BEFORE init_db so migration picks them up
+    loaded_file = None
+    if args.env_file:
+        if load_env_file(args.env_file):
+            loaded_file = args.env_file
+        else:
+            print(f"Specified env file not loaded: {args.env_file}")
+    else:
+        for candidate in ('.env', '_.env'):  # support your current naming
+            if load_env_file(candidate):
+                loaded_file = candidate
+                break
+    if loaded_file:
+        print(f"Loaded environment variables from {loaded_file}")
+    else:
+        print("No env file loaded (relying on existing process environment)")
+
     init_db(migrate=True)
 
     # After migration, ensure Telegram settings captured if present
