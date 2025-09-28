@@ -45,6 +45,10 @@ Thumbs.db
 # Logs
 *.log
 
+# Dotenv files (secrets)
+.env
+.env.*
+
 # Configuration files with sensitive data
 config_local.py
 

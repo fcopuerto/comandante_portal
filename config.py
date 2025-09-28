@@ -3,48 +3,51 @@
 
 import unicodedata as _unicodedata
 import os
+""" IMPORTANT SECURITY NOTE
+Plaintext credentials have been removed from this file.
+Provide sensitive values via environment variables or a .env file (not committed) such as:
+
+  SSH_PASS_SERVER1=...   TELEGRAM_API_ID=...   COBALTAX_PASS=...
+
+Each server below can reference an env var holding the password. If you rely on SSH keys,
+leave 'ssh_password_env' as None and set 'ssh_key_path'.
+"""
+
 SERVERS = [
     {
         'name': 'ubutwo.cobaltax.local',
-        'ip': '192.168.23.42',  # Replace with your server's IP
-        'ssh_user': 'administrador',  # Replace with your SSH username
-        # Replace with your SSH password (or None if using key)
-        'ssh_password': 'REDACTED',
-        'ssh_key_path': None,  # Path to SSH private key (optional)
-        'ssh_port': 22,  # SSH port (default is 22)
-        'os_type': 'linux',  # Options: 'linux', 'windows', 'esxi'
-        # Optional: parent host IP if this VM/container lives inside another host (e.g. ESXi)
+        'ip': '192.168.23.42',
+        'ssh_user': 'administrador',
+        'ssh_password_env': 'SSH_PASS_UBUTWO',  # env var holding password (optional)
+        'ssh_key_path': None,
+        'ssh_port': 22,
+        'os_type': 'linux',
         'parent': '192.168.23.49'
     },
     {
         'name': 'ubuntuserver.cobaltax.local',
-        'ip': '192.168.23.50',  # Replace with your server's IP
-        'ssh_user': 'administrador',  # Replace with your SSH username
-        # Replace with your SSH password (or None if using key)
-        'ssh_password': 'REDACTED',
-        'ssh_key_path': None,  # Path to SSH private key (optional)
-        'ssh_port': 22,  # SSH port (default is 22)
+        'ip': '192.168.23.50',
+        'ssh_user': 'administrador',
+        'ssh_password_env': 'SSH_PASS_UBUNTUSERVER',
+        'ssh_key_path': None,
+        'ssh_port': 22,
         'os_type': 'linux',
         'parent': '192.168.23.49'
     },
-    # Example Windows Server configuration
     {
         'name': 'WIN-K781E2RUC5K.cobaltax.local (MURANO)',
         'ip': '192.168.23.139',
-        'ssh_user': 'Administrador',  # Windows SSH username
-        'ssh_password': 'REDACTED',
+        'ssh_user': 'Administrador',
+        'ssh_password_env': 'SSH_PASS_MURANO',
         'ssh_key_path': None,
-        'ssh_port': 22,  # OpenSSH port on Windows
+        'ssh_port': 22,
         'os_type': 'windows'
     },
-    # Example ESXi 5.1 host configuration (requires pyvmomi and direct host access)
-    # For ESXi: use 'ssh_user'/'ssh_password' for the ESXi root or admin user
-    # 'ssh_port' is typically 22; 'os_type': 'esxi'
     {
         'name': 'esxi-host.local',
         'ip': '192.168.23.49',
         'ssh_user': 'root',
-        'ssh_password': 'REDACTED',
+        'ssh_password_env': 'SSH_PASS_ESXI',
         'ssh_key_path': None,
         'ssh_port': 22,
         'os_type': 'esxi'

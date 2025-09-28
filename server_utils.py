@@ -107,7 +107,12 @@ class SSHManager:
     def create_ssh_client(self, server_config: Dict[str, Any]) -> Tuple[Any, str]:
         ip = server_config.get('ip')
         user = server_config.get('ssh_user')
+        # Password can be provided directly (legacy) or via environment variable referenced by 'ssh_password_env'
         password = server_config.get('ssh_password')
+        if not password:
+            env_key = server_config.get('ssh_password_env')
+            if env_key:
+                password = os.environ.get(env_key)
         key_path = server_config.get('ssh_key_path')
         port = server_config.get('ssh_port', 22)
         try:
@@ -137,7 +142,7 @@ class SSHManager:
             return False, f"SSH connection failed: {error}"
         try:
             os_type = server_config.get('os_type', 'linux').lower()
-            ssh_password = server_config.get('ssh_password')
+            ssh_password = server_config.get('ssh_password') or os.environ.get(server_config.get('ssh_password_env') or '')
             if os_type == 'windows':
                 return self._restart_windows_server(client, ssh_password)
             else:
@@ -438,7 +443,7 @@ class SSHManager:
                 return True, "User has passwordless sudo privileges"
             else:
                 # Check if user has sudo with password
-                ssh_password = server_config.get('ssh_password')
+                ssh_password = server_config.get('ssh_password') or os.environ.get(server_config.get('ssh_password_env') or '')
                 if ssh_password:
                     # Test sudo with password
                     stdin, stdout, stderr = client.exec_command(
