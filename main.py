@@ -38,15 +38,24 @@ for candidate in ('.env', '_.env'):
             pass
         break
 
-# Launch application
+# Launch application (explicitly invoke main() since importing alone won't start GUI)
 try:
-    import server_monitor  # noqa: F401  (imports run side-effects to start GUI)
+    import server_monitor
+    if hasattr(server_monitor, 'main'):
+        server_monitor.main()
+    else:  # fallback: attempt to instantiate GUI directly
+        from server_monitor import ServerMonitorGUI  # type: ignore
+        app = ServerMonitorGUI()
+        app.run()
 except Exception as e:  # If anything fails, show a simple dialog fallback
     import traceback
     import tkinter as tk
     import tkinter.messagebox as mb
-    root = tk.Tk()
-    root.withdraw()
-    mb.showerror("Startup Error",
-                 f"Failed to start application:\n{e}\n\nTraceback:\n{traceback.format_exc()}")
+    try:
+        root = tk.Tk(); root.withdraw()
+        mb.showerror("Startup Error",
+                     f"Failed to start application:\n{e}\n\nTraceback:\n{traceback.format_exc()}")
+    except Exception:
+        print("Startup Error:", e)
+        print(traceback.format_exc())
     sys.exit(1)
