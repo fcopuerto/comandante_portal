@@ -34,16 +34,37 @@ except ImportError as e:
 # Attempt to load (and migrate) secure encrypted config store. If successful,
 # it will replace the in-memory SERVERS list contents.
 try:
-    from secure_config_store import init_db as _secure_init_db, load_servers as _secure_load_servers, get_user_password as _secure_get_user_password
+    from secure_config_store import init_db as _secure_init_db, load_servers as _secure_load_servers, get_user_password as _secure_get_user_password, get_setting as _secure_get_setting
     _secure_init_db(migrate=True)
     _db_servers = _secure_load_servers()
     if _db_servers:
         # mutate SERVERS list in-place so all existing references remain valid
         try:
-            SERVERS.clear(); SERVERS.extend(_db_servers)
-            print(f"Loaded {len(SERVERS)} server definitions from encrypted store.")
+            SERVERS.clear()
+            SERVERS.extend(_db_servers)
+            print(
+                f"Loaded {len(SERVERS)} server definitions from encrypted store.")
         except Exception:
             pass
+    # Override Telegram settings from secure store if present
+    try:
+        _sec_api_id = _secure_get_setting('TELEGRAM_API_ID')
+        _sec_api_hash = _secure_get_setting('TELEGRAM_API_HASH')
+        _sec_chat_id = _secure_get_setting('TELEGRAM_CHAT_ID')
+        if _sec_api_id:
+            globals()['TELEGRAM_API_ID'] = _sec_api_id
+        if _sec_api_hash:
+            globals()['TELEGRAM_API_HASH'] = _sec_api_hash
+        if _sec_chat_id:
+            globals()['TELEGRAM_CHAT_ID'] = _sec_chat_id
+        # Recompute TELEGRAM_ENABLED if those globals exist
+        if 'TELEGRAM_CHAT_ID' in globals() and 'TELEGRAM_API_ID' in globals() and 'TELEGRAM_API_HASH' in globals():
+            _cid = globals().get('TELEGRAM_CHAT_ID')
+            _aid = globals().get('TELEGRAM_API_ID')
+            _hash = globals().get('TELEGRAM_API_HASH')
+            globals()['TELEGRAM_ENABLED'] = bool(_cid and _aid and _hash)
+    except Exception:
+        pass
 except Exception as _e:
     print(f"Secure config store not used: {_e}")
 
@@ -190,7 +211,8 @@ class ServerMonitorGUI:
             # Prefer encrypted store if available
             expected_secure = None
             try:
-                expected_secure = _secure_get_user_password(user)  # type: ignore
+                expected_secure = _secure_get_user_password(
+                    user)  # type: ignore
             except Exception:
                 expected_secure = None
             if expected_secure:

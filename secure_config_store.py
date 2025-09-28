@@ -241,11 +241,19 @@ def init_db(migrate: bool = True):
                 is_admin INTEGER NOT NULL DEFAULT 0
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS settings(
+                key TEXT PRIMARY KEY,
+                value_enc BLOB NULL,
+                is_secret INTEGER NOT NULL DEFAULT 1
+            )
+        """)
         conn.commit()
     finally:
         conn.close()
     if migrate:
         _maybe_migrate_from_config()
+        _maybe_migrate_env_settings()
 
 
 # ------------- Migration -------------
@@ -294,6 +302,27 @@ def _maybe_migrate_from_config():
         conn.commit()
     finally:
         conn.close()
+
+
+def _maybe_migrate_env_settings():
+    """Store selected environment-provided settings if not present in DB.
+
+    Focus on Telegram credentials for now.
+    """
+    keys = [
+        'TELEGRAM_API_ID', 'TELEGRAM_API_HASH', 'TELEGRAM_CHAT_ID',
+        'TELEGRAM_DEFAULT_LIMIT', 'TELEGRAM_REFRESH_INTERVAL'
+    ]
+    for k in keys:
+        val = os.environ.get(k)
+        if not val:
+            continue
+        if get_setting(k) is None:
+            try:
+                set_setting(k, val, secret=(
+                    'HASH' in k or 'API_ID' in k or 'CHAT_ID' in k))
+            except Exception:
+                pass
 
 
 # ------------- Public Accessors -------------
@@ -531,6 +560,51 @@ def _list_users_with_pw() -> List[Tuple[str, Optional[str], bool]]:
         except Exception:
             pass
     return out
+
+
+# ------------- Settings -------------
+def set_setting(key: str, value: Optional[str], secret: bool = True):
+    if value is None:
+        return
+    try:
+        conn = _get_conn()
+    except Exception as e:
+        print(f"[secure_config_store] set_setting DB open failed: {e}")
+        return
+    try:
+        cur = conn.cursor()
+        enc = encrypt_text(value) if secret else encrypt_text(value)
+        cur.execute('''
+            INSERT INTO settings(key, value_enc, is_secret) VALUES(?,?,?)
+            ON CONFLICT(key) DO UPDATE SET value_enc=excluded.value_enc, is_secret=excluded.is_secret
+        ''', (key, enc, 1 if secret else 0))
+        conn.commit()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def get_setting(key: str) -> Optional[str]:
+    try:
+        conn = _get_conn()
+    except Exception:
+        return None
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT value_enc FROM settings WHERE key=?', (key,))
+        row = cur.fetchone()
+        if not row:
+            return None
+        return decrypt_text(row[0]) if row[0] else None
+    except Exception:
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # Initialize database (non-migrating by default when imported elsewhere).  The

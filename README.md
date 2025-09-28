@@ -143,6 +143,31 @@ Next phase will introduce an offline-first sync model:
 
 This README section will be updated once cloud sync code lands.
 
+### Sealing Environment Variables into Encrypted SQLite (No .env in Production)
+
+After defining servers and users (via `config.py` + environment variables for passwords) and running once, the application migrates them into an encrypted SQLite database (`config_store.sqlite`). To make this explicit and then remove the `.env` file from production:
+
+1. Export / source your `.env` normally (contains TELEGRAM_* and COBALTAX_* vars).
+2. Run the initialization helper:
+   ```bash
+   python scripts/init_from_env.py
+   ```
+3. Verify the summary: number of servers, users, and Telegram settings stored.
+4. Secure / remove the `.env` file (keep `.env.example` for reference). The app now reads everything from the encrypted store.
+
+Artifacts to protect (not committed):
+```
+config_store.sqlite
+config_cache.json
+.config_master.key
+```
+
+If you add new servers or users later, either:
+ - Temporarily export new environment variables then rerun the helper, or
+ - Use future in-app admin tools (planned) or a direct Python shell with `secure_config_store.upsert_server()` / `upsert_user()`.
+
+Telegram settings are also captured into the settings table; you no longer need TELEGRAM_* env vars at runtime unless you rotate them.
+
 ## Troubleshooting
 
 ### Server Restart Issues
