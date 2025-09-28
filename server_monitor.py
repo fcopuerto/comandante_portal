@@ -31,6 +31,22 @@ except ImportError as e:
     print("Make sure all required files are in the same directory.")
     sys.exit(1)
 
+# Attempt to load (and migrate) secure encrypted config store. If successful,
+# it will replace the in-memory SERVERS list contents.
+try:
+    from secure_config_store import init_db as _secure_init_db, load_servers as _secure_load_servers, get_user_password as _secure_get_user_password
+    _secure_init_db(migrate=True)
+    _db_servers = _secure_load_servers()
+    if _db_servers:
+        # mutate SERVERS list in-place so all existing references remain valid
+        try:
+            SERVERS.clear(); SERVERS.extend(_db_servers)
+            print(f"Loaded {len(SERVERS)} server definitions from encrypted store.")
+        except Exception:
+            pass
+except Exception as _e:
+    print(f"Secure config store not used: {_e}")
+
 
 def detect_os_language() -> str:
     """Detect OS UI language and map to supported codes: 'es', 'en', 'ca'.
@@ -171,6 +187,14 @@ class ServerMonitorGUI:
         result = {'ok': False}
 
         def resolve_expected(user: str) -> str:
+            # Prefer encrypted store if available
+            expected_secure = None
+            try:
+                expected_secure = _secure_get_user_password(user)  # type: ignore
+            except Exception:
+                expected_secure = None
+            if expected_secure:
+                return expected_secure
             if user in user_passwords:
                 return user_passwords[user]
             if legacy_user and user == legacy_user and legacy_pass:

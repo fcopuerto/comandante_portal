@@ -4,3 +4,4 @@ ping3>=5.1.0
 telethon>=1.36.0
 python-telegram-bot>=20.7
 pyvmomi>=8.0.3.0
+cryptography>=42.0.0
