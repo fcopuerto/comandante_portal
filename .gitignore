@@ -56,3 +56,6 @@ config_local.py
 *.pem
 *.key
 id_rsa*
+config_store.sqlite
+config_cache.json
+.config_master.key
