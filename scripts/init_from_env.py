@@ -16,17 +16,22 @@ The regular application will then run without needing those environment
 variables (unless you add new servers/users; use upsert helpers or rerun).
 """
 from __future__ import annotations
-from secure_config_store import (  # type: ignore
-    init_db, load_servers, list_users, get_setting,
-    set_setting, upsert_server, upsert_user
-)
-
 import os
 import sys
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(CURRENT_DIR)
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
+
+try:
+    from secure_config_store import (  # type: ignore
+        init_db, load_servers, list_users, get_setting,
+        set_setting, upsert_server, upsert_user
+    )
+except ModuleNotFoundError as e:  # pragma: no cover
+    print("Error: could not import secure_config_store. Make sure you run this script from the project root, e.g.:\n  python scripts/init_from_env.py")
+    print(f"Details: {e}")
+    sys.exit(1)
 
 
 def main():
