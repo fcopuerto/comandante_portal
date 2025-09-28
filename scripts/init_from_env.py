@@ -36,8 +36,10 @@ except ModuleNotFoundError as e:  # pragma: no cover
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Seal environment variables into encrypted SQLite store")
-    parser.add_argument('--env-file', dest='env_file', help='Explicit .env file to load (defaults: .env, _.env)', default=None)
+    parser = argparse.ArgumentParser(
+        description="Seal environment variables into encrypted SQLite store")
+    parser.add_argument('--env-file', dest='env_file',
+                        help='Explicit .env file to load (defaults: .env, _.env)', default=None)
     args = parser.parse_args()
 
     def load_env_file(path: str):
@@ -52,7 +54,8 @@ def main():
                     if '=' not in line:
                         continue
                     k, v = line.split('=', 1)
-                    k = k.strip(); v = v.strip()
+                    k = k.strip()
+                    v = v.strip()
                     # Don't override already exported values (caller precedence)
                     if k and v and k not in os.environ:
                         os.environ[k] = v

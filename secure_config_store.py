@@ -44,6 +44,7 @@ straightforward (store hash + random salt instead of ciphertext).
 from __future__ import annotations
 
 import os
+import sys
 import sqlite3
 import base64
 from typing import List, Dict, Optional, Tuple, Any
@@ -56,10 +57,27 @@ try:
 except Exception:  # cryptography not installed yet
     _HAS_CRYPTO = False
 
-DB_PATH = os.environ.get('COBALTAX_CONFIG_DB', 'config_store.sqlite')
-KEY_FILE = '.config_master.key'
+# ---------------------------------------------------------------------------
+# Storage locations (adapted for frozen Windows executable packaging)
+# ---------------------------------------------------------------------------
+# When packaged (PyInstaller) we want persistent writable data outside the
+# temporary extraction folder. We choose a per-user directory:
+#   Windows: %USERPROFILE%/.cobaltax
+#   Unix   : $HOME/.cobaltax
+
+_USER_BASE = os.path.join(os.path.expanduser('~'), '.cobaltax')
+try:
+    os.makedirs(_USER_BASE, exist_ok=True)
+except Exception:
+    pass  # best effort
+
+DB_PATH = os.environ.get('COBALTAX_CONFIG_DB', os.path.join(
+    _USER_BASE, 'config_store.sqlite'))
+KEY_FILE = os.environ.get('COBALTAX_KEY_FILE', os.path.join(
+    _USER_BASE, '.config_master.key'))
 KEY_ENV = 'CONFIG_MASTER_KEY'
-CACHE_PATH = os.environ.get('COBALTAX_CONFIG_CACHE', 'config_cache.json')
+CACHE_PATH = os.environ.get('COBALTAX_CONFIG_CACHE',
+                            os.path.join(_USER_BASE, 'config_cache.json'))
 
 _CACHE_LOCK = threading.Lock()
 

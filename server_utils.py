@@ -24,6 +24,26 @@ try:
 except Exception:
     _HAS_TELETHON = False
 
+# Secure settings retrieval (Telegram credentials) from encrypted store.
+try:  # pragma: no cover - best effort import
+    from secure_config_store import get_setting as _secure_get_setting  # type: ignore
+except Exception:  # pragma: no cover
+    def _secure_get_setting(_k: str):  # type: ignore
+        return None
+
+
+def _get_telegram_api_credentials():
+    """Return (api_id_str, api_hash_str) from secure store first, then environment/globals.
+
+    We intentionally do not cache aggressively so that runtime sealing (after
+    startup) is recognized without restart. Overhead is trivial.
+    """
+    api_id = _secure_get_setting('TELEGRAM_API_ID') or os.environ.get(
+        'TELEGRAM_API_ID') or globals().get('TELEGRAM_API_ID')
+    api_hash = _secure_get_setting('TELEGRAM_API_HASH') or os.environ.get(
+        'TELEGRAM_API_HASH') or globals().get('TELEGRAM_API_HASH')
+    return api_id, api_hash
+
 
 class ServerMonitor:
     """Lightweight network reachability monitor (ping + port)."""
@@ -582,8 +602,7 @@ class TelegramClient:
         """Send message using user session."""
         if not _HAS_TELETHON:
             return False, "Telethon not installed"
-        api_id = os.environ.get('TELEGRAM_API_ID')
-        api_hash = os.environ.get('TELEGRAM_API_HASH')
+        api_id, api_hash = _get_telegram_api_credentials()
         if not (api_id and api_hash):
             return False, "API credentials not set"
         try:
@@ -592,8 +611,9 @@ class TelegramClient:
                 return False, f"Invalid TELEGRAM_API_ID range: {api_id_int}"
         except Exception:
             return False, "Invalid TELEGRAM_API_ID"
-        session_path = os.path.join(
-            os.path.expanduser('~'), '.cobaltax_user_session')
+        # Store session inside persistent per-user config dir (align with secure store)
+        session_path = os.path.join(os.path.expanduser(
+            '~'), '.cobaltax', 'cobaltax_user_session')
         if not os.path.exists(session_path + '.session') and not os.path.exists(session_path):
             return False, "User session missing. Run scripts/telegram_login.py"
         loop = asyncio.new_event_loop()
@@ -626,17 +646,16 @@ class TelegramClient:
         This bypasses Bot API visibility limits by using a normal user account session.
         Requirements:
           - telethon installed
-          - environment vars TELEGRAM_API_ID / TELEGRAM_API_HASH set
+          - Telegram credentials sealed in secure store (preferred) OR set via environment vars TELEGRAM_API_ID / TELEGRAM_API_HASH
           - a previously created user session file (see scripts/telegram_login.py)
 
         If the user session doesn't exist, an instructional message is returned.
         """
         if not _HAS_TELETHON:
             return False, "Telethon not installed. Run 'pip install telethon'."
-        api_id = os.environ.get('TELEGRAM_API_ID')
-        api_hash = os.environ.get('TELEGRAM_API_HASH')
+        api_id, api_hash = _get_telegram_api_credentials()
         if not (api_id and api_hash):
-            return False, "TELEGRAM_API_ID / TELEGRAM_API_HASH not set in environment."
+            return False, "Telegram API credentials not found (seal them with scripts/init_from_env.py)."
         try:
             api_id_int = int(api_id)
             if not (0 < api_id_int < 2147483647):
@@ -645,8 +664,8 @@ class TelegramClient:
             return False, f"Invalid TELEGRAM_API_ID value: {api_id}"
 
         # Dedicated user session path
-        session_path = os.path.join(
-            os.path.expanduser('~'), '.cobaltax_user_session')
+        session_path = os.path.join(os.path.expanduser(
+            '~'), '.cobaltax', 'cobaltax_user_session')
         if not os.path.exists(session_path + '.session') and not os.path.exists(session_path):
             return False, (
                 "User session not found. Run 'python scripts/telegram_login.py' (will prompt in console) "

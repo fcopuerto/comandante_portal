@@ -240,3 +240,89 @@ git checkout -b aws-sync
 Keep production-ready local version referenced by `v1-offline-local` tag.
 
 Feel free to modify and extend this application for your specific needs.
+
+## 📦 Windows EXE Packaging (PyInstaller)
+
+You can distribute the app as a standalone Windows executable. The encrypted configuration database, key, cache, and Telegram session are stored in:
+
+```
+%USERPROFILE%\.cobaltax\
+   config_store.sqlite
+   config_cache.json
+   .config_master.key
+   cobaltax_user_session.session
+```
+
+### 1. Install build dependencies (on Windows)
+```
+py -m venv venv
+venv\Scripts\activate
+pip install --upgrade pip
+pip install -r requirements.txt
+pip install pyinstaller
+```
+
+### 2. (Optional first run) Create Telegram user session
+Run once in a console so Telethon stores the session:
+```
+python scripts/telegram_login.py
+```
+This creates the session under `%USERPROFILE%\.cobaltax`. (If you created it earlier in home as `.cobaltax_user_session.session`, you can move/rename it to the new location.)
+
+### 3. Build executable
+```
+pyinstaller --noconfirm --clean ^
+   --name CobaltaXMonitor ^
+   --add-data "translations;translations" ^
+   --hidden-import telethon ^
+   --hidden-import cryptography ^
+   --hidden-import paramiko ^
+   main.py
+
+Or simply run the helper script (one-folder + optional one-file):
+```
+scripts\build_windows.bat
+```
+Or use the spec file:
+```
+pyinstaller pyinstaller.spec
+```
+```
+Result: `dist/CobaltaXMonitor/` folder containing `CobaltaXMonitor.exe` plus dependencies.
+
+For a single-file exe (slower startup, larger file):
+```
+pyinstaller --noconfirm --clean --onefile ^
+   --name CobaltaXMonitor ^
+   --add-data "translations;translations" ^
+   --hidden-import telethon --hidden-import cryptography --hidden-import paramiko ^
+   main.py
+```
+
+### 4. First Launch
+You may provide a `.env` next to the exe for the first run (auto-sealed). After sealing, you can delete it. If no credentials found, the GUI will offer an interactive prompt for Telegram credentials.
+
+### 5. Updating / Resetting
+To force a fresh configuration while testing:
+```
+CobaltaXMonitor.exe --reset-store
+```
+This removes the SQLite DB and cache (keeps the master key and session).
+
+### 6. Common Packaging Issues
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| Missing translations | Data not bundled | Ensure `--add-data "translations;translations"` |
+| Paramiko cryptography warning | Missing backend libs | Ship standard build; warnings are usually benign |
+| Telegram history empty | Session not created | Run `scripts/telegram_login.py` locally first |
+| Credentials prompt every run | Not sealed | Ensure DB write perms to `%USERPROFILE%` |
+
+### 7. Code Signing (Optional)
+For enterprise distribution, sign the exe with `signtool.exe` to reduce SmartScreen warnings.
+
+### 8. Future Enhancements
+- Add an admin GUI panel to rotate credentials
+- Automatic update check
+- SxS portable mode flag (`--portable`) that keeps data beside exe
+
+---

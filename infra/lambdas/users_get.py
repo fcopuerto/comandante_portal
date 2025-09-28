@@ -1,4 +1,6 @@
-import os, json, datetime
+import os
+import json
+import datetime
 import boto3
 
 dynamodb = boto3.resource('dynamodb')
@@ -6,6 +8,7 @@ USERS_TABLE = os.environ.get('USERS_TABLE', 'users')
 TENANT_ID = os.environ.get('TENANT_ID', 'default')
 
 # For future optimization: maintain a meta row with global version. Here we just return full set.
+
 
 def lambda_handler(event, context):
     table = dynamodb.Table(USERS_TABLE)

@@ -1,12 +1,18 @@
-import os, json, time, uuid, datetime
+import os
+import json
+import time
+import uuid
+import datetime
 import boto3
 
 dynamodb = boto3.resource('dynamodb')
 AUDIT_TABLE = os.environ.get('AUDIT_TABLE', 'audit_events')
 TENANT_ID = os.environ.get('TENANT_ID', 'default')
 
+
 def _now_iso():
     return datetime.datetime.utcnow().isoformat(timespec='seconds') + 'Z'
+
 
 def lambda_handler(event, context):
     """Ingest a batch of audit events.
@@ -32,7 +38,7 @@ def lambda_handler(event, context):
     accepted = []
     rejected = []
 
-    with table.batch_writer(overwrite_by_pkeys=['tenant_id','id']) as batch:
+    with table.batch_writer(overwrite_by_pkeys=['tenant_id', 'id']) as batch:
         for ev in events:
             try:
                 local_id = ev.get('local_id')
@@ -56,7 +62,8 @@ def lambda_handler(event, context):
                 batch.put_item(Item=item)
                 accepted.append(local_id)
             except Exception as ex:  # per-event failure shouldn't abort all
-                rejected.append({"local_id": ev.get('local_id'), "error": str(ex)})
+                rejected.append(
+                    {"local_id": ev.get('local_id'), "error": str(ex)})
 
     return {
         "statusCode": 200,

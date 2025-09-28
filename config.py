@@ -88,15 +88,15 @@ The previous hard‑coded bot token has been removed to avoid leaking secrets.
 TELEGRAM_TOKEN = None
 
 # Chat ID still required for sending / fetching history
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
+TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')  # single assignment
 
-# Telethon credentials (must be provided via environment for security)
+# Telethon credentials (must be provided via environment OR sealed in secure store)
 TELEGRAM_API_ID = os.environ.get('TELEGRAM_API_ID')
-TELEGRAM_API_HASH = os.environ.get(
-    'TELEGRAM_API_HASH', 'REDACTED')
+# Do NOT provide a default hash here; forcing explicit provisioning or secure-store load
+TELEGRAM_API_HASH = os.environ.get('TELEGRAM_API_HASH')
 
-# Feature flag indicating whether Telegram features should appear in UI
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')  # no default
+# Feature flag indicating whether Telegram features should appear in UI at import time.
+# (May be recomputed later after secure store override.)
 TELEGRAM_ENABLED = bool(
     TELEGRAM_CHAT_ID and TELEGRAM_API_ID and TELEGRAM_API_HASH)
 

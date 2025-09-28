@@ -34,7 +34,13 @@ except ImportError as e:
 # Attempt to load (and migrate) secure encrypted config store. If successful,
 # it will replace the in-memory SERVERS list contents.
 try:
-    from secure_config_store import init_db as _secure_init_db, load_servers as _secure_load_servers, get_user_password as _secure_get_user_password, get_setting as _secure_get_setting
+    from secure_config_store import (
+        init_db as _secure_init_db,
+        load_servers as _secure_load_servers,
+        get_user_password as _secure_get_user_password,
+        get_setting as _secure_get_setting,
+        set_setting as _secure_set_setting,
+    )
     _secure_init_db(migrate=True)
     _db_servers = _secure_load_servers()
     if _db_servers:
@@ -149,6 +155,9 @@ class ServerMonitorGUI:
             if not self._run_login_dialog(AUTH_USERNAME, AUTH_PASSWORD, AUTH_USERS, AUTH_PASSWORDS):
                 self.root.destroy()
                 sys.exit(0)
+
+        # If Telegram disabled due to missing credentials (no .env and not sealed), offer interactive setup
+        self._maybe_prompt_telegram_credentials()
 
         # Setup GUI components after successful auth (or if auth disabled)
         self.create_widgets()
@@ -289,6 +298,81 @@ class ServerMonitorGUI:
         y = (screen_height - WINDOW_HEIGHT) // 2
 
         self.root.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+{x}+{y}")
+
+    # ---------------- Telegram Credential Interactive Prompt -----------------
+    def _maybe_prompt_telegram_credentials(self):
+        # Already enabled? nothing to do
+        if globals().get('TELEGRAM_ENABLED'):
+            return
+        existing_id = globals().get('TELEGRAM_API_ID') or _secure_get_setting('TELEGRAM_API_ID')
+        existing_hash = globals().get(
+            'TELEGRAM_API_HASH') or _secure_get_setting('TELEGRAM_API_HASH')
+        existing_chat = globals().get(
+            'TELEGRAM_CHAT_ID') or _secure_get_setting('TELEGRAM_CHAT_ID')
+        if existing_id and existing_hash and existing_chat:
+            globals()['TELEGRAM_ENABLED'] = True
+            return
+        # Silent if running in non-interactive (e.g., no display) or user chose previously not to configure
+        try:
+            self.root.update()
+        except Exception:
+            return
+        if not messagebox.askyesno("Telegram", "Telegram credentials not found. Configure now? (Yes)  / Leave disabled? (No)"):
+            return
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Configure Telegram")
+        dlg.geometry("420x240")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        id_var = tk.StringVar(value=str(existing_id or ''))
+        hash_var = tk.StringVar(value=str(existing_hash or ''))
+        chat_var = tk.StringVar(value=str(existing_chat or ''))
+        status_var = tk.StringVar(value="Enter API ID / HASH / Chat ID")
+
+        def mk(label, var):
+            f = ttk.Frame(dlg)
+            f.pack(fill='x', padx=14, pady=4)
+            ttk.Label(f, text=label, width=12).pack(side=tk.LEFT)
+            e = ttk.Entry(f, textvariable=var)
+            e.pack(side=tk.LEFT, fill='x', expand=True)
+            return e
+        e_id = mk('API ID', id_var)
+        e_hash = mk('API HASH', hash_var)
+        e_chat = mk('Chat ID', chat_var)
+        ttk.Label(dlg, textvariable=status_var, foreground='grey').pack(
+            anchor='w', padx=16, pady=(4, 2))
+        btnf = ttk.Frame(dlg)
+        btnf.pack(fill='x', padx=14, pady=8)
+
+        def save():
+            aid = id_var.get().strip()
+            ah = hash_var.get().strip()
+            ch = chat_var.get().strip()
+            try:
+                if not (aid and ah and ch):
+                    raise ValueError('All fields required')
+                _ = int(aid)
+            except Exception:
+                status_var.set('Invalid values')
+                return
+            try:
+                _secure_set_setting('TELEGRAM_API_ID', aid, True)
+                _secure_set_setting('TELEGRAM_API_HASH', ah, True)
+                _secure_set_setting('TELEGRAM_CHAT_ID', ch, True)
+                globals()['TELEGRAM_API_ID'] = aid
+                globals()['TELEGRAM_API_HASH'] = ah
+                globals()['TELEGRAM_CHAT_ID'] = ch
+                globals()['TELEGRAM_ENABLED'] = True
+                status_var.set('Saved. Restart not required.')
+                dlg.after(700, dlg.destroy)
+            except Exception as e:
+                status_var.set(f'Save failed: {e}')
+        ttk.Button(btnf, text='Save', command=save).pack(side=tk.RIGHT)
+        ttk.Button(btnf, text='Cancel', command=dlg.destroy).pack(
+            side=tk.RIGHT, padx=(0, 6))
+        dlg.bind('<Return>', lambda _e: save())
+        e_id.focus_set()
+        self.root.wait_window(dlg)
 
     def create_widgets(self):
         """Create and layout all GUI widgets."""
