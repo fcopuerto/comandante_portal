@@ -24,6 +24,19 @@ try:
 except Exception:
     _HAS_TELETHON = False
 
+# If telethon is available, expose a small runner wrapper to start the
+# background client and fetch history synchronously for the Tk GUI.
+try:
+    if _HAS_TELETHON:
+        from telethon_runner import start_telethon_background as _start_telethon_background  # type: ignore
+        from telethon_runner import get_entity_and_messages as _get_entity_and_messages  # type: ignore
+    else:
+        _start_telethon_background = None  # type: ignore
+        _get_entity_and_messages = None  # type: ignore
+except Exception:
+    _start_telethon_background = None  # type: ignore
+    _get_entity_and_messages = None  # type: ignore
+
 # Secure settings retrieval (Telegram credentials) from encrypted store.
 try:  # pragma: no cover - best effort import
     from secure_config_store import get_setting as _secure_get_setting  # type: ignore
@@ -43,6 +56,22 @@ def _get_telegram_api_credentials():
     api_hash = _secure_get_setting('TELEGRAM_API_HASH') or os.environ.get(
         'TELEGRAM_API_HASH') or globals().get('TELEGRAM_API_HASH')
     return api_id, api_hash
+
+
+def telethon_start_background():
+    """Start Telethon client in background if available. Raises RuntimeError on failure."""
+    if not _HAS_TELETHON or _start_telethon_background is None:
+        raise RuntimeError('telethon is not available')
+    return _start_telethon_background()
+
+
+def telethon_fetch_history(chat_id, limit=50, timeout=10.0):
+    """Fetch (entity, messages) for chat_id using background Telethon runner.
+
+    Returns (entity, messages) or (None, [])."""
+    if not _HAS_TELETHON or _get_entity_and_messages is None:
+        raise RuntimeError('telethon is not available')
+    return _get_entity_and_messages(chat_id, limit=limit, timeout=timeout)
 
 
 class ServerMonitor:
