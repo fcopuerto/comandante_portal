@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import decimal
 import json
 import os
 import pathlib
@@ -46,6 +47,7 @@ try:
         get_user_password as _secure_get_user_password,
         get_setting as _secure_get_setting,
         set_setting as _secure_set_setting,
+        get_all_settings as _secure_get_all_settings,
         is_admin as _secure_is_admin,
         list_users as _secure_list_users,
     )
@@ -81,9 +83,10 @@ try:
         TELEGRAM_ENABLED = True
 except Exception as _e:
     print(f"Secure config store: {_e}")
-    _secure_get_user_password = None  # type: ignore
-    _secure_is_admin = None           # type: ignore
-    _secure_list_users = None         # type: ignore
+    _secure_get_user_password = None     # type: ignore
+    _secure_get_all_settings = None      # type: ignore
+    _secure_is_admin = None              # type: ignore
+    _secure_list_users = None            # type: ignore
 
 # --- Session store ---
 _sessions: Dict[str, Dict[str, Any]] = {}
@@ -364,6 +367,17 @@ async def serve_sw() -> Response:
 
 
 # --- Auth ---
+
+def _verify_current_user_password(sess: Dict[str, Any], provided: str) -> bool:
+    """Return True if `provided` matches the stored password for the session user."""
+    if not AUTH_ENABLED:
+        return True  # auth disabled — no password to check
+    username = sess.get("user", "")
+    expected = _resolve_password(username)
+    if not expected:
+        return True  # no password configured for this user
+    return provided == expected
+
 
 def _resolve_password(username: str) -> Optional[str]:
     if _secure_get_user_password:
@@ -695,6 +709,9 @@ async def refresh_server(ip: str, request: Request) -> Dict[str, Any]:
 @app.post("/api/servers/{ip}/restart")
 async def restart_server(ip: str, request: Request) -> Dict[str, Any]:
     sess = _require_session(request)
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    if not _verify_current_user_password(sess, body.get("confirm_password", "")):
+        raise HTTPException(status_code=403, detail="Wrong password")
     server = next((s for s in SERVERS if s["ip"] == ip), None)
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -2335,6 +2352,15 @@ async def chat(request: Request) -> StreamingResponse:
 
 # ── Config export / import ────────────────────────────────────────────────────
 
+def _json_default(obj: object) -> object:
+    """Fallback serializer for types json.dumps doesn't handle (e.g. Decimal from MSSQL)."""
+    if isinstance(obj, decimal.Decimal):
+        return int(obj) if obj == obj.to_integral_value() else float(obj)
+    if isinstance(obj, (bytes, bytearray, memoryview)):
+        return None  # never leak binary blobs
+    return str(obj)
+
+
 _NON_SECRET_SETTINGS = {
     "COBALTAX_USERS", "COBALTAX_ADMINS", "LDAP_HOSTS", "LDAP_DOMAIN",
     "LDAP_BASE_DN", "LDAP_ADMIN_GROUP", "LDAP_PORT", "LDAP_USE_SSL",
@@ -2346,83 +2372,112 @@ _NON_SECRET_SETTINGS = {
 
 @app.get("/api/admin/config/export")
 async def export_config(request: Request) -> Response:
-    sess = _require_session(request)
-    if not _is_admin(sess):
-        raise HTTPException(status_code=403, detail="Admin only")
+    import traceback as _tb
+    _require_admin(request)
 
-    servers = [
-        {k: v for k, v in s.items() if k != "ssh_password"}
-        for s in SERVERS
-    ]
-    settings: Dict[str, str] = {}
-    for key in _NON_SECRET_SETTINGS:
-        val = _secure_get_setting(key)
-        if val is not None:
-            settings[key] = val
+    try:
+        # Servers including decrypted SSH passwords
+        servers = [dict(s) for s in SERVERS]
 
-    payload = {
-        "version": 1,
-        "exported_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "servers": servers,
-        "settings": settings,
-        "users": [{"username": u, "is_admin": _secure_is_admin(u) if callable(_secure_is_admin) else False}
-                  for u in (_secure_list_users() if callable(_secure_list_users) else [])],
-    }
-    filename = f"cobaltax_config_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
-    return Response(
-        content=json.dumps(payload, ensure_ascii=False, indent=2),
-        media_type="application/json",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+        # All settings (including secrets like Telegram creds, AI key, SSH passwords)
+        settings: Dict[str, str] = {}
+        if callable(_secure_get_all_settings):
+            settings = _secure_get_all_settings()
+
+        # Users with their passwords
+        user_list = _secure_list_users() if callable(_secure_list_users) else []
+        users = []
+        for u in user_list:
+            pw = _secure_get_user_password(u) if callable(_secure_get_user_password) else None
+            users.append({
+                "username": u,
+                "password": pw,
+                "is_admin": _secure_is_admin(u) if callable(_secure_is_admin) else False,
+            })
+
+        payload = {
+            "version": 2,
+            "exported_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "servers": servers,
+            "settings": settings,
+            "users": users,
+        }
+        filename = f"cobaltax_config_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+        content = json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default)
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}\n{_tb.format_exc()}"
+        raise HTTPException(status_code=500, detail=detail) from exc
 
 
 @app.post("/api/admin/config/import")
 async def import_config(request: Request) -> Dict[str, Any]:
-    sess = _require_session(request)
-    if not _is_admin(sess):
-        raise HTTPException(status_code=403, detail="Admin only")
+    import traceback as _tb
+    sess = _require_admin(request)
 
-    data = await request.json()
-    if data.get("version") != 1:
+    try:
+        data = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}") from exc
+
+    if not _verify_current_user_password(sess, data.get("confirm_password", "")):
+        raise HTTPException(status_code=403, detail="Wrong password")
+    if data.get("version") not in (1, 2):
         raise HTTPException(status_code=400, detail="Unsupported config version")
 
     imported: Dict[str, int] = {"servers": 0, "settings": 0, "users": 0}
+    errors: list = []
 
-    # Servers (no passwords — those must be set separately)
-    for s in data.get("servers", []):
-        if not s.get("ip"):
-            continue
-        try:
-            from secure_config_store import upsert_server as _upsert_srv
-            _upsert_srv(s)
-            imported["servers"] += 1
-        except Exception:
-            pass
-
-    # Settings
-    for key, val in data.get("settings", {}).items():
-        if key in _NON_SECRET_SETTINGS and val:
+    try:
+        # Servers (v2 includes ssh_password in plaintext)
+        for s in data.get("servers", []):
+            if not s.get("ip"):
+                continue
             try:
-                _secure_set_setting(key, str(val), secret=False)
+                from secure_config_store import upsert_server as _upsert_srv
+                _upsert_srv(s)
+                imported["servers"] += 1
+            except Exception as exc:
+                errors.append(f"server {s.get('ip')}: {exc}")
+
+        # Settings — all keys accepted (secrets stored encrypted)
+        _secret_keys = {"TELEGRAM_API_HASH", "TELEGRAM_API_ID", "TELEGRAM_CHAT_ID",
+                        "AI_API_KEY", "COBALTAX_PASS", "CONFIG_MASTER_KEY"}
+        for key, val in data.get("settings", {}).items():
+            if not val:
+                continue
+            try:
+                _secure_set_setting(key, str(val), secret=(key in _secret_keys))
                 imported["settings"] += 1
-            except Exception:
-                pass
+            except Exception as exc:
+                errors.append(f"setting {key}: {exc}")
 
-    # Users (no passwords)
-    for u in data.get("users", []):
-        username = u.get("username")
-        if not username:
-            continue
-        try:
-            from secure_config_store import upsert_user as _upsert_usr
-            _upsert_usr(username, None, is_admin_flag=bool(u.get("is_admin")))
-            imported["users"] += 1
-        except Exception:
-            pass
+        # Users — v2 includes password; v1 had none
+        for u in data.get("users", []):
+            username = u.get("username")
+            if not username:
+                continue
+            try:
+                from secure_config_store import upsert_user as _upsert_usr
+                _upsert_usr(username, u.get("password"), is_admin_flag=bool(u.get("is_admin")))
+                imported["users"] += 1
+            except Exception as exc:
+                errors.append(f"user {username}: {exc}")
 
-    log_event("config_imported", imported, user=sess.get("user"))
-    return {"ok": True, "imported": imported,
-            "note": "Passwords were not imported — set them via Settings after import."}
+        log_event("config_imported", {**imported, "errors": len(errors), "user": sess.get("user")})
+        return {"ok": True, "imported": imported, **({"errors": errors} if errors else {})}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}\n{_tb.format_exc()}"
+        raise HTTPException(status_code=500, detail=detail) from exc
 
 
 def run(host: str = "0.0.0.0", port: int = 8080) -> None:

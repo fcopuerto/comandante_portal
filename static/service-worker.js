@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE = 'cobaltax-v1';
+const CACHE = 'cobaltax-v3';
 
 // Pre-cache on install — app shell
 const PRECACHE_URLS = [

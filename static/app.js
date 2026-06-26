@@ -2,6 +2,41 @@
 
 'use strict';
 
+// ---- Password-confirm modal ----
+// Usage: const pw = await requirePasswordConfirm('Title', 'Description text');
+// Returns the entered password string, or null if the user cancelled.
+function requirePasswordConfirm(title, desc) {
+  return new Promise(resolve => {
+    const overlay  = document.getElementById('pw-confirm-modal');
+    const titleEl  = document.getElementById('pw-confirm-title');
+    const descEl   = document.getElementById('pw-confirm-desc');
+    const input    = document.getElementById('pw-confirm-input');
+    const okBtn    = document.getElementById('pw-confirm-ok');
+    const cancelFn = () => { close(); resolve(null); };
+    const okFn     = () => { const val = input.value; close(); resolve(val); };
+
+    function close() {
+      overlay.classList.add('hidden');
+      input.value = '';
+      okBtn.removeEventListener('click', okFn);
+      document.getElementById('pw-confirm-cancel').removeEventListener('click', cancelFn);
+      document.getElementById('pw-confirm-close').removeEventListener('click', cancelFn);
+      input.removeEventListener('keydown', onKey);
+    }
+    function onKey(e) { if (e.key === 'Enter') okFn(); if (e.key === 'Escape') cancelFn(); }
+
+    titleEl.textContent = title;
+    descEl.textContent  = desc;
+    document.getElementById('pw-confirm-user').textContent = state.user || '';
+    overlay.classList.remove('hidden');
+    input.focus();
+    okBtn.addEventListener('click', okFn);
+    document.getElementById('pw-confirm-cancel').addEventListener('click', cancelFn);
+    document.getElementById('pw-confirm-close').addEventListener('click', cancelFn);
+    input.addEventListener('keydown', onKey);
+  });
+}
+
 // ---- State ----
 const state = {
   user: null,
@@ -176,6 +211,7 @@ function onAuthenticated() {
   document.querySelectorAll('.ws-admin-only').forEach(el => {
     if (state.isAdmin) el.classList.remove('hidden');
   });
+  if (window._refreshConfigImportCard) _refreshConfigImportCard();
 
   buildModuleNav();
   showPortal();
@@ -842,17 +878,19 @@ async function refreshAll() {
   await Promise.all(Object.keys(state.servers).map(ip => refreshServer(ip))).catch(() => {});
 }
 
-function confirmRestart(server) {
-  const msg = t('confirm_restart_message', { server: server.name, ip: server.ip }) ||
-    `Restart ${server.name} (${server.ip})?`;
-  if (!confirm(msg)) return;
-  doRestart(server);
+async function confirmRestart(server) {
+  const pw = await requirePasswordConfirm(
+    'Confirm restart',
+    `You are about to restart ${server.name} (${server.ip}). Enter your password to proceed.`
+  );
+  if (pw === null) return;
+  doRestart(server, pw);
 }
 
-async function doRestart(server) {
+async function doRestart(server, confirmPassword) {
   setStatus(`Restarting ${server.name}…`);
   try {
-    await api('POST', `/api/servers/${server.ip}/restart`);
+    await api('POST', `/api/servers/${server.ip}/restart`, { confirm_password: confirmPassword });
     toast(`Restart initiated for ${server.name}`, 'info');
   } catch (e) {
     toast(`Restart failed: ${e.message}`, 'err');
@@ -1053,6 +1091,87 @@ document.getElementById('settings-save-btn').addEventListener('click', async () 
     toast(`Save failed: ${e.message}`, 'err');
   }
 });
+
+// ---- Config Export / Import ----
+
+(function () {
+  const card     = document.getElementById('config-export-import-card');
+  const exportBtn  = document.getElementById('config-export-btn');
+  const fileInput  = document.getElementById('config-import-file');
+  const importBtn  = document.getElementById('config-import-btn');
+  const fileLabel  = document.getElementById('config-import-filename');
+  const resultPre  = document.getElementById('config-import-result');
+
+  // Show card only for admins (called after login)
+  window._refreshConfigImportCard = function () {
+    if (card) card.classList.toggle('hidden', !state.isAdmin);
+  };
+
+  fileInput.addEventListener('change', () => {
+    const f = fileInput.files[0];
+    fileLabel.textContent = f ? f.name : '';
+    importBtn.disabled = !f;
+    resultPre.classList.add('hidden');
+  });
+
+  exportBtn.addEventListener('click', async () => {
+    exportBtn.disabled = true;
+    exportBtn.textContent = '⬇ Exporting…';
+    try {
+      const res = await fetch('/api/admin/config/export');
+      if (res.status === 401) { showLogin(); throw new Error('Unauthenticated'); }
+      if (!res.ok) throw new Error(await res.text());
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      const date = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `cobaltax-config-${date}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast(`Export failed: ${e.message}`, 'err');
+    } finally {
+      exportBtn.disabled = false;
+      exportBtn.textContent = '⬇ Export config';
+    }
+  });
+
+  importBtn.addEventListener('click', async () => {
+    const f = fileInput.files[0];
+    if (!f) return;
+
+    const pw = await requirePasswordConfirm(
+      'Confirm import',
+      'Importing will overwrite servers, settings and users. Enter your password to proceed.'
+    );
+    if (pw === null) return;
+
+    importBtn.disabled = true;
+    importBtn.textContent = 'Importing…';
+    resultPre.classList.add('hidden');
+    try {
+      const text = await f.text();
+      const body = JSON.parse(text);
+      body.confirm_password = pw;
+      const res  = await api('POST', '/api/admin/config/import', body);
+      const msg  = `✔ Imported: ${res.imported.servers} server(s), ${res.imported.settings} setting(s), ${res.imported.users} user(s)`;
+      resultPre.textContent = msg;
+      resultPre.classList.remove('hidden');
+      toast(msg, 'ok');
+      fileInput.value = '';
+      fileLabel.textContent = '';
+      importBtn.disabled = true;
+    } catch (e) {
+      resultPre.textContent = `Error: ${e.message}`;
+      resultPre.classList.remove('hidden');
+      toast(`Import failed: ${e.message}`, 'err');
+      importBtn.disabled = false;
+    } finally {
+      importBtn.textContent = 'Import';
+    }
+  });
+})();
 
 // ---- Apps module ----
 let _appsData = { apps: [], links: [] };

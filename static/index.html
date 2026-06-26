@@ -743,6 +743,20 @@
         <pre id="ldap-test-result" class="ldap-test-result hidden"></pre>
       </div>
 
+      <!-- Config Export / Import (admin only) -->
+      <div class="settings-card hidden" id="config-export-import-card" style="margin-top:1.5rem">
+        <h3>📦 Export / Import configuration</h3>
+        <p class="text-dim" style="margin-bottom:.75rem">Export all servers, settings and users (without passwords) to a JSON file. Import that file on another instance to restore the configuration.</p>
+        <div style="display:flex;gap:.75rem;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-primary" id="config-export-btn">⬇ Export config</button>
+          <label class="btn btn-secondary" for="config-import-file" style="cursor:pointer;margin:0">⬆ Choose file…</label>
+          <input type="file" id="config-import-file" accept=".json,application/json" style="display:none" />
+          <button class="btn btn-primary" id="config-import-btn" disabled>Import</button>
+        </div>
+        <span id="config-import-filename" class="text-dim" style="margin-top:.5rem;display:block"></span>
+        <pre id="config-import-result" class="ldap-test-result hidden" style="margin-top:.75rem"></pre>
+      </div>
+
     </section>
 
     <!-- Module: Workstations -->
@@ -883,6 +897,25 @@
 
 <!-- Toast -->
 <div id="toast-container"></div>
+
+<!-- Password-confirm modal (reused for restart, import, and other sensitive actions) -->
+<div id="pw-confirm-modal" class="overlay hidden">
+  <div class="modal modal-sm">
+    <div class="modal-header">
+      <h2 id="pw-confirm-title">Confirm your password</h2>
+      <button class="btn btn-sm" id="pw-confirm-close">✕</button>
+    </div>
+    <p id="pw-confirm-desc" class="text-dim" style="margin-bottom:.75rem"></p>
+    <div class="form-group">
+      <label>Password for <strong id="pw-confirm-user"></strong></label>
+      <input type="password" id="pw-confirm-input" autocomplete="current-password" />
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="pw-confirm-cancel">Cancel</button>
+      <button class="btn btn-danger" id="pw-confirm-ok">Confirm</button>
+    </div>
+  </div>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>

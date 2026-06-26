@@ -343,6 +343,20 @@ def get_setting(key: str) -> Optional[str]:
     return _decrypt(row[0]) if row and row[0] else None
 
 
+def get_all_settings() -> Dict[str, str]:
+    """Return all settings as {key: decrypted_value}."""
+    with get_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT [key], value_enc FROM cobaltax_settings")
+        rows = cur.fetchall()
+    out: Dict[str, str] = {}
+    for key, blob in rows:
+        val = _decrypt(blob) if blob else None
+        if val is not None:
+            out[key] = val
+    return out
+
+
 def set_setting(key: str, value: Optional[str], secret: bool = True) -> None:
     if value is None:
         return
