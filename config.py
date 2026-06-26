@@ -1,124 +1,35 @@
-# Configuration file for server monitoring
-# Edit this file to add your Ubuntu servers
+# Configuration file — fallback defaults only.
+# Real server data is loaded from SQL Server (cobaltax_servers table).
+# This list is only used on first run when the DB is empty.
+# Add your servers here for the initial seed, then manage them via the web UI.
 
 import unicodedata as _unicodedata
 import os
-""" IMPORTANT SECURITY NOTE
-Plaintext credentials have been removed from this file.
-Provide sensitive values via environment variables or a .env file (not committed) such as:
-
-  SSH_PASS_SERVER1=...   TELEGRAM_API_ID=...   COBALTAX_PASS=...
-
-Each server below can reference an env var holding the password. If you rely on SSH keys,
-leave 'ssh_password_env' as None and set 'ssh_key_path'.
-"""
 
 SERVERS = [
-    # --- Cobaltax Principal (192.168.23.0/24) — Servers ---
+    # Example — replace with your servers (or leave empty and add via web UI)
     {
-        'name': 'esxi-host.local',
-        'ip': '192.168.23.49',
-        'ssh_user': 'root',
-        'ssh_password_env': 'SSH_PASS_ESXI',
-        'ssh_key_path': None,
-        'ssh_port': 22,
-        'os_type': 'esxi',
-        'subnet': 'cobaltax_main',
-        'watts_idle': 40,   # PowerEdge T20 (Xeon E3-1200 v3, desktop-class, very efficient)
-        'watts_max': 130,
-    },
-    {
-        'name': 'ubutwo.cobaltax.local',
-        'ip': '192.168.23.42',
-        'ssh_user': 'administrador',
-        'ssh_password_env': 'SSH_PASS_UBUTWO',
+        'name': 'myserver.example.com',
+        'ip': '192.168.1.10',
+        'ssh_user': 'admin',
+        'ssh_password_env': 'SSH_PASS_MYSERVER',
         'ssh_key_path': None,
         'ssh_port': 22,
         'os_type': 'linux',
-        'parent': '192.168.23.49',
-        'subnet': 'cobaltax_main',
-        'watts_idle': 0, 'watts_max': 0,  # VM inside ESXi T20 — power counted in host
+        'subnet': 'main',
+        'watts_idle': 0,
+        'watts_max': 0,
     },
     {
-        'name': 'ubuntuserver.cobaltax.local',
-        'ip': '192.168.23.50',
-        'ssh_user': 'administrador',
-        'ssh_password_env': 'SSH_PASS_UBUNTUSERVER',
-        'ssh_key_path': None,
-        'ssh_port': 22,
-        'os_type': 'linux',
-        'parent': '192.168.23.49',
-        'subnet': 'cobaltax_main',
-        'watts_idle': 0, 'watts_max': 0,  # VM inside ESXi T20 — power counted in host
-    },
-    {
-        'name': 'Windows PC (192.168.23.48)',
-        'ip': '192.168.23.48',
-        'ssh_user': None,
-        'ssh_password_env': None,
-        'ssh_key_path': None,
-        'ssh_port': None,
-        'os_type': 'windows',
-        'subnet': 'cobaltax_main',
-    },
-    {
-        'name': 'WIN-K781E2RUC5K.cobaltax.local (MURANO)',
-        'ip': '192.168.23.139',
-        'ssh_user': 'Administrador',
-        'ssh_password_env': 'SSH_PASS_MURANO',
-        'ssh_key_path': None,
-        'ssh_port': 22,
-        'os_type': 'windows',
-        'subnet': 'cobaltax_main',
-        'watts_idle': 65,   # PowerEdge R240
-        'watts_max': 175,
-    },
-    {
-        'name': 'ciserver.cobaltax.local',
-        'ip': '192.168.23.201',
-        'ssh_user': 'root',
-        'ssh_password_env': 'SSH_PASS_CISERVER',
-        'ssh_key_path': None,
-        'ssh_port': 22,
-        'os_type': 'synology',
-        'subnet': 'cobaltax_main',
-        'watts_idle': 25,   # HP MicroServer Gen8 G1610T (Celeron 35W TDP, very efficient)
-        'watts_max': 65,
-    },
-    # --- Cobaltax Principal — Network Devices ---
-    {
-        'name': 'Orange Router (Gateway)',
-        'ip': '192.168.23.200',
+        'name': 'router.example.com',
+        'ip': '192.168.1.1',
         'ssh_user': None,
         'ssh_password_env': None,
         'ssh_key_path': None,
         'ssh_port': None,
         'os_type': 'router',
-        'subnet': 'cobaltax_main',
-        'web_url': 'http://192.168.23.200/',
-    },
-    {
-        'name': 'Ciagrei AP',
-        'ip': '192.168.23.199',
-        'ssh_user': None,
-        'ssh_password_env': None,
-        'ssh_key_path': None,
-        'ssh_port': None,
-        'os_type': 'ap',
-        'subnet': 'cobaltax_main',
-        'web_url': 'http://192.168.23.199/',
-    },
-    # --- Cobaltax Tienda (192.168.9.0/24) — Network Devices ---
-    {
-        'name': 'Router Tienda',
-        'ip': '192.168.9.1',
-        'ssh_user': None,
-        'ssh_password_env': None,
-        'ssh_key_path': None,
-        'ssh_port': None,
-        'os_type': 'router',
-        'subnet': 'cobaltax_tienda',
-        'web_url': 'http://192.168.9.1/',
+        'subnet': 'main',
+        'web_url': 'http://192.168.1.1/',
     },
 ]
 
@@ -186,7 +97,7 @@ AUTH_USERS_RAW = os.environ.get('COBALTAX_USERS')
 if AUTH_USERS_RAW:
     AUTH_USERS = [u.strip() for u in AUTH_USERS_RAW.split(',') if u.strip()]
 else:
-    AUTH_USERS = ['Jose', 'Eva', 'Abelardo', 'Mario', 'Llorenç', 'Fran']
+    AUTH_USERS = ['admin']  # set COBALTAX_USERS env var or manage via web UI
 
 # Per-user passwords: environment variables COBALTAX_PASS_<UPPER_NAME>
 # Accents are stripped for variable naming (e.g., Llorenç -> LLORENC)

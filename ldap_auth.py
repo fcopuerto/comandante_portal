@@ -30,7 +30,7 @@ except ImportError:
     _HAS_LDAP3 = False
 
 # --- Config ---
-_DOMAIN = os.environ.get("LDAP_DOMAIN", "cobaltax.local").strip().lower()
+_DOMAIN = os.environ.get("LDAP_DOMAIN", "").strip().lower()
 _USE_SSL = os.environ.get("LDAP_USE_SSL", "").strip().lower() in ("1", "true", "yes")
 _STARTTLS = os.environ.get("LDAP_STARTTLS", "").strip().lower() in ("1", "true", "yes")
 _PORT = int(os.environ.get("LDAP_PORT", "636" if _USE_SSL else "389"))

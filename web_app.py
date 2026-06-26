@@ -46,6 +46,8 @@ try:
         get_user_password as _secure_get_user_password,
         get_setting as _secure_get_setting,
         set_setting as _secure_set_setting,
+        is_admin as _secure_is_admin,
+        list_users as _secure_list_users,
     )
     _secure_init_db(migrate=True)
     _db_servers = _secure_load_servers()
@@ -80,6 +82,8 @@ try:
 except Exception as _e:
     print(f"Secure config store: {_e}")
     _secure_get_user_password = None  # type: ignore
+    _secure_is_admin = None           # type: ignore
+    _secure_list_users = None         # type: ignore
 
 # --- Session store ---
 _sessions: Dict[str, Dict[str, Any]] = {}
@@ -794,12 +798,7 @@ async def get_audit(
 
 # --- Printers ---
 
-_DEFAULT_PRINTERS = [
-    {"name": "Brother MFC-9340CDW",     "location": "P1 zona fax",           "ip": "192.168.23.123", "subnet": "cobaltax_main",   "link": "data/printers/AUTO_BROTHER_MFC-9340CDW.exe"},
-    {"name": "Brother HL-L5200DW",      "location": "P1 Abelardo / Llorenç", "ip": "192.168.23.150", "subnet": "cobaltax_main",   "link": "data/printers/AUTO_BROTHER_5200DW_150.exe"},
-    {"name": "Brother HL-L5200DW",      "location": "P1 Mario / Santi",      "ip": "192.168.23.26",  "subnet": "cobaltax_main",   "link": "data/printers/AUTO_BROTHER_HL-L6300DW_MARIO.exe"},
-    {"name": "Brother HL-L2340D series","location": "Tienda, mostrador",      "ip": "192.168.9.17",   "subnet": "cobaltax_tienda", "link": "data/printers/AUTO_BROTHER_2340DW_TIENDA.exe"},
-]
+_DEFAULT_PRINTERS: List[Dict[str, Any]] = []  # seed via scripts/seed_portal_config.py
 
 
 def _load_printers() -> List[Dict[str, Any]]:
@@ -1041,10 +1040,14 @@ async def download_install_script(ip: str, request: Request, os_slot: str = Quer
 
 # --- Monitored Applications ---
 
-_DEFAULT_MONITORED_APPS: List[Dict[str, Any]] = [
-    {"id": "sage",   "name": "Sage",      "url": "http://WIN-K781E2RUC5K.cobaltax.local/", "server": "WIN-K781E2RUC5K"},
-    {"id": "mantis", "name": "Mantis BT", "url": "http://mantis.cobaltax.local/",          "server": "mantis.cobaltax.local"},
-]
+def _load_apps() -> List[Dict[str, Any]]:
+    try:
+        raw = _secure_get_setting("monitored_apps")
+        if raw:
+            return json.loads(raw)
+    except Exception:
+        pass
+    return []
 
 
 def _http_check(app: Dict[str, Any]) -> Dict[str, Any]:
@@ -1059,7 +1062,7 @@ def _http_check(app: Dict[str, Any]) -> Dict[str, Any]:
 @app.get("/api/apps/monitor")
 async def monitor_apps(request: Request) -> List[Dict[str, Any]]:
     _require_session(request)
-    apps = _DEFAULT_MONITORED_APPS
+    apps = _load_apps()
     loop = asyncio.get_event_loop()
     results = await asyncio.gather(*[
         loop.run_in_executor(None, _http_check, a) for a in apps
@@ -1069,18 +1072,20 @@ async def monitor_apps(request: Request) -> List[Dict[str, Any]]:
 
 # --- Backup monitoring ---
 
-_DEFAULT_BACKUPS: List[Dict[str, Any]] = [
-    {"id": "backup_nas",       "name": "NAS Completo (ciserver)",    "server": "ciserver",      "last_backup": "2026-06-23 03:00", "retention": "30 días", "type": "daily"},
-    {"id": "backup_db",        "name": "Base de datos",               "server": "ubuntuserver",  "last_backup": "2026-06-23 02:00", "retention": "14 días", "type": "daily"},
-    {"id": "backup_sage",      "name": "Sage (WIN-K781E2RUC5K)",     "server": "WIN-K781E2RUC5K","last_backup": "2026-06-22 22:00", "retention": "7 días",  "type": "daily"},
-    {"id": "backup_tienda_nas","name": "NAS Tienda",                  "server": "ciserver",      "last_backup": "2026-06-23 04:00", "retention": "14 días", "type": "daily"},
-]
+def _load_backups() -> List[Dict[str, Any]]:
+    try:
+        raw = _secure_get_setting("backup_jobs")
+        if raw:
+            return json.loads(raw)
+    except Exception:
+        pass
+    return []
 
 
 @app.get("/api/backups")
 async def get_backups(request: Request) -> List[Dict[str, Any]]:
     _require_session(request)
-    return _DEFAULT_BACKUPS
+    return _load_backups()
 
 
 @app.post("/api/backups/restore")
@@ -1972,11 +1977,7 @@ def _build_system_prompt(sess: Dict[str, Any]) -> str:
 - Role: {'Administrator — can restart servers and take all actions' if is_admin else 'Standard user — read-only, cannot restart servers'}
 
 ## Network
-- Main office (Cobaltax Principal): 192.168.23.0/24
-- Shop (Cobaltax Tienda, Terrassa): 192.168.9.0/24
-- VPN: WireGuard on ubuntuserver (192.168.23.50) UDP 51820
-- Gateway: Orange Router 192.168.23.200
-- External DNS: ciagrei.dyndns.org
+{_secure_get_setting("NETWORK_DESCRIPTION") or "(not configured — set NETWORK_DESCRIPTION in Settings)"}
 
 ## Servers
 {chr(10).join(server_lines)}
@@ -2330,6 +2331,98 @@ async def chat(request: Request) -> StreamingResponse:
 
     return StreamingResponse(_generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── Config export / import ────────────────────────────────────────────────────
+
+_NON_SECRET_SETTINGS = {
+    "COBALTAX_USERS", "COBALTAX_ADMINS", "LDAP_HOSTS", "LDAP_DOMAIN",
+    "LDAP_BASE_DN", "LDAP_ADMIN_GROUP", "LDAP_PORT", "LDAP_USE_SSL",
+    "LDAP_STARTTLS", "SSH_BANNER_TIMEOUT", "SSH_AUTH_TIMEOUT",
+    "TELEGRAM_DEFAULT_LIMIT", "TELEGRAM_REFRESH_INTERVAL",
+    "NETWORK_DESCRIPTION", "printers_list", "monitored_apps", "backup_jobs",
+}
+
+
+@app.get("/api/admin/config/export")
+async def export_config(request: Request) -> Response:
+    sess = _require_session(request)
+    if not _is_admin(sess):
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    servers = [
+        {k: v for k, v in s.items() if k != "ssh_password"}
+        for s in SERVERS
+    ]
+    settings: Dict[str, str] = {}
+    for key in _NON_SECRET_SETTINGS:
+        val = _secure_get_setting(key)
+        if val is not None:
+            settings[key] = val
+
+    payload = {
+        "version": 1,
+        "exported_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "servers": servers,
+        "settings": settings,
+        "users": [{"username": u, "is_admin": _secure_is_admin(u) if callable(_secure_is_admin) else False}
+                  for u in (_secure_list_users() if callable(_secure_list_users) else [])],
+    }
+    filename = f"cobaltax_config_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/admin/config/import")
+async def import_config(request: Request) -> Dict[str, Any]:
+    sess = _require_session(request)
+    if not _is_admin(sess):
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    data = await request.json()
+    if data.get("version") != 1:
+        raise HTTPException(status_code=400, detail="Unsupported config version")
+
+    imported: Dict[str, int] = {"servers": 0, "settings": 0, "users": 0}
+
+    # Servers (no passwords — those must be set separately)
+    for s in data.get("servers", []):
+        if not s.get("ip"):
+            continue
+        try:
+            from secure_config_store import upsert_server as _upsert_srv
+            _upsert_srv(s)
+            imported["servers"] += 1
+        except Exception:
+            pass
+
+    # Settings
+    for key, val in data.get("settings", {}).items():
+        if key in _NON_SECRET_SETTINGS and val:
+            try:
+                _secure_set_setting(key, str(val), secret=False)
+                imported["settings"] += 1
+            except Exception:
+                pass
+
+    # Users (no passwords)
+    for u in data.get("users", []):
+        username = u.get("username")
+        if not username:
+            continue
+        try:
+            from secure_config_store import upsert_user as _upsert_usr
+            _upsert_usr(username, None, is_admin_flag=bool(u.get("is_admin")))
+            imported["users"] += 1
+        except Exception:
+            pass
+
+    log_event("config_imported", imported, user=sess.get("user"))
+    return {"ok": True, "imported": imported,
+            "note": "Passwords were not imported — set them via Settings after import."}
 
 
 def run(host: str = "0.0.0.0", port: int = 8080) -> None:
