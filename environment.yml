@@ -9,3 +9,11 @@ dependencies:
   - pip:
     - requests
     - ping3
+    - telethon
+    - python-telegram-bot
+    - pyvmomi
+    - cryptography
+    - fastapi
+    - "uvicorn[standard]"
+    - python-multipart
+    - ldap3

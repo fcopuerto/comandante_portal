@@ -56,6 +56,17 @@ config_local.py
 *.pem
 *.key
 id_rsa*
+
+# Local data files (migrated to SQL Server)
 config_store.sqlite
 config_cache.json
 .config_master.key
+*.sqlite
+_.env
+
+# Telegram session files (secrets)
+*.session
+*.session-journal
+
+# Binary assets served at runtime (drivers, printer installers)
+data/

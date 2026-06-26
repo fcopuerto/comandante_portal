@@ -112,7 +112,7 @@ To add a new language, create a new JSON file following the same structure.
 The app supports a multi-user login dialog. Users and (optional) per-user passwords are provided via environment variables:
 
 ```
-export COBALTAX_USERS="Jose,Eva,Abelardo,Mario,Llorenç"
+export COBALTAX_USERS="Fran,Jose,Eva,Abelardo,Mario,Llorenç"
 export COBALTAX_PASS=globalFallback
 export COBALTAX_PASS_JOSE=secret1
 export COBALTAX_PASS_EVA=secret2

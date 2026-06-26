@@ -1,0 +1,17 @@
+{
+  "name": "CobaltaX Monitor",
+  "short_name": "CobaltaX",
+  "description": "CobaltaX Server & Network Monitor",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1d21",
+  "theme_color": "#4a9eff",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

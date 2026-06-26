@@ -1,0 +1,23 @@
+[project]
+name = "cobaltax"
+version = "1.0.0"
+description = "CobaltaX Server Monitor — web portal for managing Ubuntu/ESXi servers"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "python-multipart>=0.0.9",
+    "paramiko>=3.3.1,<4.0.0",
+    "cryptography>=42.0.0",
+    "requests>=2.31.0",
+    "ping3>=5.1.0",
+    "telethon>=1.36.0",
+    "python-telegram-bot>=20.7",
+    "pyvmomi>=8.0.3.0",
+    "ldap3>=2.9.1",
+    "pyodbc>=5.1.0",
+    "anthropic>=0.30.0",
+]
+
+[dependency-groups]
+dev = []

@@ -32,13 +32,43 @@ _thread: Optional[threading.Thread] = None
 
 
 def _get_credentials() -> Tuple[Optional[int], Optional[str]]:
-    """Return (api_id, api_hash) from environment or None."""
-    api_id = os.environ.get('TELEGRAM_API_ID')
-    api_hash = os.environ.get('TELEGRAM_API_HASH')
+    """Return (api_id, api_hash) trying secure store first, then environment.
+
+    This softly imports `secure_config_store.get_setting` so telethon_runner
+    doesn't hard-fail if the secure store isn't present. Returns (int, str)
+    or (None, None) when credentials are missing.
+    """
+    api_id = None
+    api_hash = None
+    # Try secure store first (best-effort)
     try:
-        return (int(api_id), api_hash) if api_id and api_hash else (None, None)
+        from secure_config_store import get_setting as _get_setting  # type: ignore
+        try:
+            _aid = _get_setting('TELEGRAM_API_ID')
+            _ahash = _get_setting('TELEGRAM_API_HASH')
+            if _aid:
+                api_id = _aid
+            if _ahash:
+                api_hash = _ahash
+        except Exception:
+            pass
     except Exception:
+        # secure store not available; fall back to env
+        pass
+
+    # Environment overrides if secure store didn't provide values
+    if not api_id:
+        api_id = os.environ.get('TELEGRAM_API_ID')
+    if not api_hash:
+        api_hash = os.environ.get('TELEGRAM_API_HASH')
+
+    try:
+        if api_id and api_hash:
+            return (int(api_id), api_hash)
+    except Exception:
+        # malformed api_id
         return (None, api_hash)
+    return (None, None)
 
 
 def start_telethon_background(timeout: float = 5.0) -> Tuple[Optional[TelegramClient], Optional[asyncio.AbstractEventLoop]]:
@@ -62,7 +92,37 @@ def start_telethon_background(timeout: float = 5.0) -> Tuple[Optional[TelegramCl
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         client = TelegramClient(_SESSION_BASENAME, api_id, api_hash)
-        loop.run_until_complete(client.start())
+
+        async def _init_client():
+            # Connect without prompting; if not authorized, instruct user to run login helper.
+            await client.connect()
+            try:
+                authorized = await client.is_user_authorized()
+            except Exception:
+                # Fallback: try a lightweight call
+                try:
+                    me = await client.get_me()
+                    authorized = me is not None
+                except Exception:
+                    authorized = False
+            if not authorized:
+                raise RuntimeError(
+                    "Telethon user session not authorized. Run 'python3 scripts/telegram_login.py' to create it.")
+
+        # Initialize client; if this fails, bubble up to caller via thread startup wait timeout
+        loop.run_until_complete(_init_client())
+        # Optionally validate that session is a user (not a bot) to support joins/history
+        try:
+            me = loop.run_until_complete(client.get_me())
+            if getattr(me, 'bot', False):
+                # Bots cannot join via invites or fetch member-only history like a user
+                # Leave client running but surface a clear message via print (caught by UI handlers)
+                print('[telethon_runner] Warning: The active session is a BOT account. '
+                      'Join Invite and full history require a USER session. '
+                      'Recreate ~/.cobaltax/cobaltax_user_session with scripts/telegram_login.py using your phone number.')
+        except Exception:
+            pass
+
         # expose
         globals()['_client'] = client
         globals()['_loop'] = loop

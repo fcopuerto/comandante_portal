@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#4a9eff" />
+  <title>Portal Cobaltax</title>
+  <link rel="manifest" href="/static/manifest.json" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js" defer></script>
+</head>
+<body>
+
+<!-- Login screen -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">🏠</div>
+    <h1 id="login-portal-name">Portal Cobaltax</h1>
+    <div class="form-group">
+      <label id="label-user">Username</label>
+      <input id="login-user" type="text" autocomplete="username" placeholder="user or user@domain" />
+    </div>
+    <div class="form-group">
+      <label id="label-pass">Password</label>
+      <input id="login-pass" type="password" autocomplete="current-password" />
+    </div>
+    <p id="login-error" class="error hidden"></p>
+    <button id="login-btn" class="btn btn-primary btn-full">Login</button>
+  </div>
+</div>
+
+<!-- Offline banner -->
+<div id="offline-banner" class="offline-banner hidden">
+  <span data-i18n="offline_banner">⚠️ Offline — showing last cached data</span><span id="offline-since"></span>
+</div>
+
+<!-- Portal (shown after login) -->
+<div id="portal" class="hidden">
+
+  <!-- Sidebar -->
+  <aside id="sidebar">
+    <div class="sidebar-brand">
+      <span class="brand-icon">🏠</span>
+      <span class="brand-name" id="sidebar-title">Portal Cobaltax</span>
+      <button id="sidebar-toggle" class="sidebar-collapse-btn" title="Collapse">&#x2190;</button>
+    </div>
+
+    <nav id="module-nav">
+      <!-- Injected by JS -->
+    </nav>
+
+    <div class="sidebar-bottom">
+      <div class="sidebar-user">
+        <span class="user-icon">👤</span>
+        <span id="sidebar-username"></span>
+      </div>
+      <div class="sidebar-actions">
+        <select id="lang-select" title="Language">
+          <option value="en">EN</option>
+          <option value="es">ES</option>
+          <option value="ca">CA</option>
+        </select>
+        <button id="logout-btn" class="btn btn-sm" title="Logout">⏻</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main id="main-content">
+
+    <!-- Topbar -->
+    <header class="topbar">
+      <button id="mobile-menu-btn" class="btn btn-sm">☰</button>
+      <h2 id="page-title" class="page-title"></h2>
+      <div class="topbar-right">
+        <span id="status-bar" class="status-bar"></span>
+      </div>
+    </header>
+
+    <!-- Module: Health -->
+    <section id="module-health" class="module hidden">
+      <div class="toolbar">
+        <button id="refresh-btn" class="btn btn-sm">🔄 <span data-i18n="refresh">Refresh</span></button>
+        <label class="toggle-label">
+          <input type="checkbox" id="auto-refresh-cb" checked />
+          <span data-i18n="auto_refresh">Auto-refresh</span>
+        </label>
+        <button id="add-server-btn" class="btn btn-sm btn-primary" style="margin-left:auto;display:none">+ Add server</button>
+      </div>
+      <div id="servers-grid"></div>
+
+      <!-- Server add/edit modal -->
+      <div id="server-modal" class="overlay hidden">
+        <div class="modal modal-sm">
+          <div class="modal-header">
+            <h2 id="server-modal-title">Server</h2>
+            <button class="btn btn-sm" id="server-modal-close">✕</button>
+          </div>
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" id="sm-name" placeholder="esxi-host.local" />
+          </div>
+          <div class="form-group">
+            <label>IP address</label>
+            <input type="text" id="sm-ip" placeholder="192.168.1.10" />
+          </div>
+          <div class="form-group">
+            <label>Type</label>
+            <select id="sm-os-type">
+              <option value="linux">Linux</option>
+              <option value="windows">Windows</option>
+              <option value="esxi">ESXi</option>
+              <option value="synology">Synology</option>
+              <option value="router">Router</option>
+              <option value="ap">Access Point</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Subnet / group <span class="text-dim">(optional)</span></label>
+            <input type="text" id="sm-subnet" placeholder="cobaltax_main" />
+          </div>
+          <div class="form-group">
+            <label>Parent IP <span class="text-dim">(for VMs — leave blank for physical)</span></label>
+            <input type="text" id="sm-parent" placeholder="192.168.1.10" />
+          </div>
+          <div class="form-group">
+            <label>Web URL <span class="text-dim">(optional)</span></label>
+            <input type="text" id="sm-web-url" placeholder="https://192.168.1.10" />
+          </div>
+          <hr class="modal-divider" />
+          <p class="modal-section-title">SSH</p>
+          <div class="form-group">
+            <label>SSH user</label>
+            <input type="text" id="sm-ssh-user" placeholder="root" />
+          </div>
+          <div class="form-group">
+            <label>SSH password <span class="text-dim">(leave blank to keep existing)</span></label>
+            <input type="password" id="sm-ssh-password" placeholder="••••••••" autocomplete="new-password" />
+          </div>
+          <div class="form-group">
+            <label>SSH port</label>
+            <input type="number" id="sm-ssh-port" value="22" min="1" max="65535" />
+          </div>
+          <div class="form-group">
+            <label>SSH key path <span class="text-dim">(optional)</span></label>
+            <input type="text" id="sm-ssh-key" placeholder="/root/.ssh/id_rsa" />
+          </div>
+          <hr class="modal-divider" />
+          <p class="modal-section-title">Power</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem">
+            <div class="form-group">
+              <label>Idle watts</label>
+              <input type="number" id="sm-watts-idle" value="0" min="0" />
+            </div>
+            <div class="form-group">
+              <label>Max watts</label>
+              <input type="number" id="sm-watts-max" value="0" min="0" />
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-sm" id="server-modal-cancel">Cancel</button>
+            <button class="btn btn-sm btn-primary" id="server-modal-save">Save</button>
+          </div>
+        </div>
+      </div>
+      <div id="printers-health"></div>
+      <div id="apps-health"></div>
+      <div id="backups-health"></div>
+
+    </section>
+
+    <!-- Module: Apps -->
+    <section id="module-apps" class="module hidden">
+
+      <!-- Software -->
+      <div class="apps-section">
+        <h4 class="apps-section-title" data-i18n="apps_software">Software</h4>
+        <div id="apps-grid" class="apps-grid"></div>
+      </div>
+
+      <!-- Quick Links -->
+      <div class="apps-section" id="links-section">
+        <div class="apps-section-header">
+          <h4 class="apps-section-title" data-i18n="apps_links_title">Quick Links</h4>
+          <button class="btn btn-sm btn-primary" id="add-link-btn" style="display:none" data-i18n="apps_add_link">+ Add link</button>
+        </div>
+        <div id="links-grid" class="apps-grid"></div>
+        <p id="links-empty" class="text-dim hidden">No links configured yet. Admins can add links above.</p>
+      </div>
+
+      <!-- Link edit modal -->
+      <div id="link-modal" class="overlay hidden">
+        <div class="modal modal-sm">
+          <div class="modal-header">
+            <h2 id="link-modal-title">Link</h2>
+            <button class="btn btn-sm" id="link-modal-close">✕</button>
+          </div>
+          <div class="form-group">
+            <label data-i18n="link_label">Label</label>
+            <input type="text" id="lm-label" placeholder="Intranet" />
+          </div>
+          <div class="form-group">
+            <label data-i18n="link_url">URL</label>
+            <input type="url" id="lm-url" placeholder="https://..." />
+          </div>
+          <div class="form-group">
+            <label data-i18n="link_icon">Icon</label>
+            <div class="icon-picker-wrap">
+              <div class="icon-picker-row">
+                <span id="lm-icon-preview" class="icon-preview-large">🔗</span>
+                <div class="icon-picker-controls">
+                  <button type="button" class="btn btn-sm" id="icon-pick-toggle">🎨 Choose…</button>
+                  <input type="text" id="lm-icon" placeholder="or paste image URL" />
+                </div>
+              </div>
+              <div id="icon-picker-panel" class="icon-picker-panel hidden"></div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label data-i18n="link_desc">Description <span class="text-dim">(optional)</span></label>
+            <input type="text" id="lm-desc" placeholder="Short description" />
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-primary" id="link-modal-save" data-i18n="link_save">Save</button>
+            <button class="btn" id="link-modal-cancel" data-i18n="link_cancel">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Module: Printers -->
+    <section id="module-printers" class="module hidden">
+      <div class="toolbar" id="printers-toolbar">
+        <!-- Add button injected for admins -->
+      </div>
+      <table class="printers-table" id="printers-table">
+        <thead>
+          <tr>
+            <th data-i18n="printer_name">Printer</th>
+            <th data-i18n="printer_location">Location</th>
+            <th data-i18n="printer_ip">IP</th>
+            <th>Status</th>
+            <th data-i18n="printer_actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="printers-body"></tbody>
+      </table>
+      <p id="printers-empty" class="text-dim hidden" data-i18n="printer_empty">No printers configured yet.</p>
+
+      <!-- Printer edit modal -->
+      <div id="printer-modal" class="overlay hidden">
+        <div class="modal modal-sm">
+          <div class="modal-header">
+            <h2 id="printer-modal-title">Printer</h2>
+            <button class="btn btn-sm" id="printer-modal-close">✕</button>
+          </div>
+          <div class="form-group">
+            <label data-i18n="printer_name">Printer name</label>
+            <input type="text" id="pm-name" placeholder="Brother HL-L5200DW (BRWXXXXX)" />
+          </div>
+          <div class="form-group">
+            <label data-i18n="printer_location">Location</label>
+            <input type="text" id="pm-location" placeholder="P1 zona fax" />
+          </div>
+          <div class="form-group">
+            <label data-i18n="printer_ip">IP address</label>
+            <input type="text" id="pm-ip" placeholder="192.168.23.x" />
+          </div>
+          <hr class="modal-divider" />
+          <p class="modal-section-title">Option A — Pre-built EXE installer</p>
+          <div class="form-group">
+            <label>Upload a Brother auto-installer (.exe)</label>
+            <div class="upload-row">
+              <input type="text" id="pm-driver" placeholder="No file uploaded" readonly />
+              <label class="btn btn-sm upload-btn" for="pm-file-input">Browse…</label>
+              <input type="file" id="pm-file-input" accept=".exe" style="display:none" />
+            </div>
+            <span id="pm-upload-status" class="text-dim" style="font-size:0.8rem"></span>
+          </div>
+          <hr class="modal-divider" />
+          <p class="modal-section-title">Option B — Generate PS1 from driver files</p>
+          <details class="help-box">
+            <summary>How to get the driver files</summary>
+            <ol>
+              <li>Go to <strong>support.brother.com</strong>, search your printer model and select Windows.</li>
+              <li>Download the <strong>Full Driver &amp; Software Package</strong> for each OS version you need.</li>
+              <li>Run the EXE — when the installer asks to proceed, <strong>cancel it</strong>. The files are already extracted.</li>
+              <li>Open <code>C:\Users\&lt;you&gt;\AppData\Local\Temp\Brother\</code> and find the folder with <code>.inf</code> files.</li>
+              <li>Select <strong>all files</strong> in that folder (INF + CAB + CAT) and upload them in the slot below.</li>
+              <li>Fill in the <strong>Windows driver name</strong> exactly as it appears inside the INF file (look for <code>DriverDesc=</code> or <code>DriverPackageDisplayName=</code>).</li>
+            </ol>
+          </details>
+          <div class="form-group">
+            <label>Windows driver name <span class="text-dim">(same for all OS versions)</span></label>
+            <input type="text" id="pm-wdriver" placeholder="Brother MFC-9340CDW Printer" />
+          </div>
+
+          <div class="os-slots">
+            <div class="os-slot-row">
+              <span class="os-slot-label">Windows 11</span>
+              <span id="pm-slot-info-win11" class="text-dim os-slot-info">No driver uploaded</span>
+              <label class="btn btn-sm upload-btn" for="pm-inf-win11">Browse…</label>
+              <input type="file" id="pm-inf-win11" data-slot="win11" multiple style="display:none" />
+            </div>
+            <div class="os-slot-row">
+              <span class="os-slot-label">Windows 10 (64-bit)</span>
+              <span id="pm-slot-info-win10_64" class="text-dim os-slot-info">No driver uploaded</span>
+              <label class="btn btn-sm upload-btn" for="pm-inf-win10_64">Browse…</label>
+              <input type="file" id="pm-inf-win10_64" data-slot="win10_64" multiple style="display:none" />
+            </div>
+            <div class="os-slot-row">
+              <span class="os-slot-label">Windows 10 (32-bit)</span>
+              <span id="pm-slot-info-win10_32" class="text-dim os-slot-info">No driver uploaded</span>
+              <label class="btn btn-sm upload-btn" for="pm-inf-win10_32">Browse…</label>
+              <input type="file" id="pm-inf-win10_32" data-slot="win10_32" multiple style="display:none" />
+            </div>
+          </div>
+          <span id="pm-inf-status" class="text-dim" style="font-size:0.8rem;display:block;margin-top:4px"></span>
+          <div class="modal-footer">
+            <button class="btn btn-primary" id="printer-modal-save" data-i18n="printer_save">Save</button>
+            <button class="btn" id="printer-modal-cancel" data-i18n="printer_cancel">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Module: Support -->
+    <section id="module-support" class="module hidden">
+
+      <!-- Stats bar -->
+      <div id="support-stats-bar" class="support-stats-bar"></div>
+
+      <!-- Ticket list view -->
+      <div id="support-list-view">
+        <div class="toolbar support-toolbar">
+          <button class="btn btn-primary btn-sm" id="new-ticket-btn">🎫 New ticket</button>
+          <select id="support-filter-status" class="support-filter">
+            <option value="">All statuses</option>
+            <option value="open">Open</option>
+            <option value="in_progress">In progress</option>
+            <option value="resolved">Resolved</option>
+            <option value="closed">Closed</option>
+          </select>
+          <select id="support-filter-priority" class="support-filter">
+            <option value="">All priorities</option>
+            <option value="urgent">Urgent</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <select id="support-filter-category" class="support-filter">
+            <option value="">All categories</option>
+          </select>
+          <div class="view-toggle">
+            <button class="btn btn-sm view-btn active" id="view-list-btn" title="List">☰</button>
+            <button class="btn btn-sm view-btn" id="view-board-btn" title="Board">⬛</button>
+          </div>
+        </div>
+        <div id="tickets-list"></div>
+        <p id="tickets-empty" class="text-dim hidden">No tickets found.</p>
+      </div>
+
+      <!-- Kanban board view -->
+      <div id="support-board-view" class="hidden">
+        <div class="kanban-board">
+          <div class="kanban-col" data-status="open">
+            <div class="kanban-col-header kanban-open">🟢 Open <span class="kanban-count" id="kc-open"></span></div>
+            <div class="kanban-col-body" id="kb-open"></div>
+          </div>
+          <div class="kanban-col" data-status="in_progress">
+            <div class="kanban-col-header kanban-in-progress">⚙️ In Progress <span class="kanban-count" id="kc-in_progress"></span></div>
+            <div class="kanban-col-body" id="kb-in_progress"></div>
+          </div>
+          <div class="kanban-col" data-status="resolved">
+            <div class="kanban-col-header kanban-resolved">✅ Resolved <span class="kanban-count" id="kc-resolved"></span></div>
+            <div class="kanban-col-body" id="kb-resolved"></div>
+          </div>
+          <div class="kanban-col" data-status="closed">
+            <div class="kanban-col-header kanban-closed">⬛ Closed <span class="kanban-count" id="kc-closed"></span></div>
+            <div class="kanban-col-body" id="kb-closed"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Create / edit ticket modal -->
+      <div id="ticket-form-overlay" class="overlay hidden">
+        <div class="modal modal-wide">
+          <div class="modal-header">
+            <h2 id="ticket-form-title">New Ticket</h2>
+            <button class="btn btn-sm" id="ticket-form-close">✕</button>
+          </div>
+          <div class="form-group">
+            <label>Title</label>
+            <input type="text" id="tf-title" placeholder="Brief summary of the issue" />
+          </div>
+          <div class="ticket-form-row">
+            <div class="form-group">
+              <label>Category</label>
+              <select id="tf-category"></select>
+            </div>
+            <div class="form-group">
+              <label>Priority</label>
+              <select id="tf-priority">
+                <option value="low">Low</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+                <option value="urgent">Urgent</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Description</label>
+            <textarea id="tf-description" rows="5" placeholder="Describe the issue in detail…"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Attachments <span class="text-dim">(optional, max 20 MB each)</span></label>
+            <input type="file" id="tf-files" multiple />
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-primary" id="ticket-form-save">Submit</button>
+            <button class="btn" id="ticket-form-cancel">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ticket detail modal -->
+      <div id="ticket-detail-overlay" class="overlay hidden">
+        <div class="modal modal-wide">
+          <div class="modal-header">
+            <h2 id="td-title-header"></h2>
+            <button class="btn btn-sm" id="td-close-btn">✕</button>
+          </div>
+
+          <!-- Meta bar (admin-editable) -->
+          <div class="ticket-meta-bar" id="td-meta-bar"></div>
+
+          <!-- Description -->
+          <div class="ticket-description" id="td-description"></div>
+
+          <!-- Attachments on ticket -->
+          <div id="td-attachments"></div>
+
+          <!-- Comment thread -->
+          <div class="ticket-comments" id="td-comments"></div>
+
+          <!-- Add comment -->
+          <div class="ticket-reply">
+            <textarea id="td-reply-text" rows="3" placeholder="Add a comment…"></textarea>
+            <div class="ticket-reply-actions">
+              <label class="btn btn-sm upload-btn" for="td-reply-files">📎 Attach</label>
+              <input type="file" id="td-reply-files" multiple style="display:none" />
+              <span id="td-reply-file-names" class="text-dim" style="font-size:0.8rem"></span>
+              <button class="btn btn-primary btn-sm" id="td-reply-send">Send</button>
+            </div>
+          </div>
+
+          <!-- AI assistant panel -->
+          <div class="ai-assist-panel" id="td-ai-panel">
+            <div class="ai-assist-header" id="td-ai-toggle">🤖 AI Assistant <span class="ai-assist-chevron">▼</span></div>
+            <div class="ai-assist-body hidden" id="td-ai-body">
+              <div class="ai-assist-quick">
+                <button class="btn btn-sm" data-prompt="Suggest a clear and professional reply to this ticket">💬 Suggest reply</button>
+                <button class="btn btn-sm" data-prompt="How would you categorize this ticket and what priority should it have?">🏷 Categorize</button>
+                <button class="btn btn-sm" data-prompt="Provide step-by-step resolution steps for this issue">🔧 Resolution steps</button>
+              </div>
+              <textarea id="td-ai-input" rows="2" placeholder="Ask AI about this ticket…"></textarea>
+              <div class="ai-assist-actions">
+                <button class="btn btn-primary btn-sm" id="td-ai-ask">Ask AI</button>
+                <button class="btn btn-sm hidden" id="td-ai-use">Use as reply</button>
+              </div>
+              <div class="ai-assist-response hidden" id="td-ai-response"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Module: VPN -->
+    <section id="module-vpn" class="module hidden">
+
+      <!-- Admin upload panel -->
+      <div id="vpn-admin-panel" class="hidden">
+        <div class="vpn-upload-card">
+          <h4 data-i18n="vpn_upload_title">Upload WireGuard Config</h4>
+          <div class="vpn-upload-form">
+            <div class="form-group">
+              <label data-i18n="vpn_name">Config name</label>
+              <input type="text" id="vpn-name" placeholder="Office VPN – John" />
+            </div>
+            <div class="form-group">
+              <label data-i18n="vpn_assign_to">Assign to user</label>
+              <select id="vpn-assign-to"></select>
+            </div>
+            <div class="form-group">
+              <label data-i18n="vpn_file">Config file (.conf)</label>
+              <input type="file" id="vpn-file" accept=".conf" />
+            </div>
+            <button class="btn btn-primary" id="vpn-upload-btn" data-i18n="vpn_upload_btn">Upload</button>
+            <span id="vpn-upload-status" class="text-dim"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Config list -->
+      <div class="vpn-list-section">
+        <h4 data-i18n="vpn_my_configs">My VPN Configs</h4>
+        <table class="vpn-table hidden" id="vpn-table">
+          <thead>
+            <tr>
+              <th data-i18n="vpn_col_name">Name</th>
+              <th data-i18n="vpn_col_file">File</th>
+              <th id="vpn-col-user" data-i18n="vpn_col_user">User</th>
+              <th data-i18n="vpn_col_uploaded">Uploaded by</th>
+              <th data-i18n="vpn_col_date">Date</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="vpn-tbody"></tbody>
+        </table>
+        <p id="vpn-empty" class="text-dim hidden" data-i18n="vpn_empty">No VPN configs assigned to you yet.</p>
+      </div>
+
+      <!-- Import instructions -->
+      <details class="vpn-instructions">
+        <summary data-i18n="vpn_how_to_import">How to import your WireGuard config</summary>
+        <div class="vpn-instructions-body">
+
+          <div class="vpn-os-tab-bar">
+            <button class="vpn-os-tab active" data-os="windows">🪟 Windows</button>
+            <button class="vpn-os-tab" data-os="macos">🍎 macOS</button>
+            <button class="vpn-os-tab" data-os="linux">🐧 Linux</button>
+            <button class="vpn-os-tab" data-os="mobile">📱 iOS / Android</button>
+          </div>
+
+          <div class="vpn-os-panel" id="vpn-os-windows">
+            <ol>
+              <li>Download and install <strong>WireGuard</strong> from the Apps section above or from <code>wireguard.com/install</code></li>
+              <li>Download your <code>.conf</code> file using the button in the table.</li>
+              <li>Open <strong>WireGuard</strong> → click <strong>Import tunnel(s) from file…</strong> → select the <code>.conf</code> file.</li>
+              <li>Click <strong>Activate</strong>.</li>
+            </ol>
+            <p class="vpn-tip"><strong>PowerShell (run as Administrator):</strong></p>
+            <pre class="vpn-code">wireguard.exe /installtunnel "C:\Users\YourName\Downloads\cobaltax.conf"</pre>
+          </div>
+
+          <div class="vpn-os-panel hidden" id="vpn-os-macos">
+            <ol>
+              <li>Install <strong>WireGuard</strong> from the Mac App Store, or via Homebrew: <code>brew install wireguard-tools</code></li>
+              <li>Download your <code>.conf</code> file.</li>
+              <li>Open <strong>WireGuard</strong> → <strong>File → Import Tunnel(s) from File…</strong> → select the file.</li>
+              <li>Click <strong>Activate</strong>.</li>
+            </ol>
+            <p class="vpn-tip"><strong>Terminal (wg-quick):</strong></p>
+            <pre class="vpn-code">sudo wg-quick up ~/Downloads/cobaltax.conf</pre>
+          </div>
+
+          <div class="vpn-os-panel hidden" id="vpn-os-linux">
+            <ol>
+              <li>Install WireGuard: <code>sudo apt install wireguard</code> (Debian/Ubuntu) or <code>sudo dnf install wireguard-tools</code> (Fedora/RHEL)</li>
+              <li>Download your <code>.conf</code> file.</li>
+              <li>Copy to <code>/etc/wireguard/</code>: <code>sudo cp cobaltax.conf /etc/wireguard/cobaltax.conf</code></li>
+              <li>Start the tunnel: <code>sudo wg-quick up cobaltax</code></li>
+              <li>Enable on boot: <code>sudo systemctl enable wg-quick@cobaltax</code></li>
+            </ol>
+          </div>
+
+          <div class="vpn-os-panel hidden" id="vpn-os-mobile">
+            <ol>
+              <li>Install the <strong>WireGuard</strong> app from the App Store (iOS) or Google Play (Android).</li>
+              <li>Download the <code>.conf</code> file to your device (email it to yourself or use AirDrop).</li>
+              <li>Open WireGuard → tap <strong>+</strong> → <strong>Create from file or archive</strong> → select the <code>.conf</code> file.</li>
+              <li>Toggle the tunnel on.</li>
+            </ol>
+            <p class="vpn-tip">Tip: On iPhone you can AirDrop the .conf file directly from your Mac.</p>
+          </div>
+
+        </div>
+      </details>
+
+    </section>
+
+    <!-- Module: Wiki -->
+    <section id="module-wiki" class="module hidden">
+
+      <!-- Toolbar -->
+      <div class="wiki-toolbar">
+        <div class="wiki-search-wrap">
+          <input type="text" id="wiki-search" placeholder="Search wiki…" class="wiki-search-input" />
+          <div id="wiki-search-results" class="wiki-search-dropdown hidden"></div>
+        </div>
+        <div class="wiki-toolbar-actions">
+          <button class="btn btn-sm btn-primary hidden" id="wiki-new-cat-btn">+ Category</button>
+          <button class="btn btn-sm btn-primary hidden" id="wiki-new-art-btn" disabled>+ Article</button>
+          <a class="btn btn-sm" id="wiki-export-btn" href="/api/wiki/export" target="_blank" title="Export all for LLM">⬇ Export</a>
+        </div>
+      </div>
+
+      <!-- 3-column layout -->
+      <div class="wiki-layout">
+
+        <!-- Categories column -->
+        <div class="wiki-cats" id="wiki-cats">
+          <p class="text-dim" id="wiki-cats-empty">No categories yet.</p>
+        </div>
+
+        <!-- Articles list column -->
+        <div class="wiki-arts" id="wiki-arts-panel">
+          <p class="text-dim" id="wiki-arts-empty">Select a category.</p>
+          <ul class="wiki-art-list hidden" id="wiki-art-list"></ul>
+        </div>
+
+        <!-- Article content column -->
+        <div class="wiki-content" id="wiki-content-panel">
+          <div id="wiki-article-view" class="hidden">
+            <div class="wiki-article-header">
+              <h2 id="wiki-art-title"></h2>
+              <div class="wiki-art-meta">
+                <span id="wiki-art-tags" class="wiki-tags"></span>
+                <span id="wiki-art-date" class="text-dim"></span>
+                <span id="wiki-art-author" class="text-dim"></span>
+              </div>
+              <div class="wiki-art-actions">
+                <button class="btn btn-sm hidden" id="wiki-edit-btn">✏ Edit</button>
+                <button class="btn btn-sm btn-danger hidden" id="wiki-del-art-btn">🗑</button>
+              </div>
+            </div>
+            <div id="wiki-art-body" class="wiki-art-body"></div>
+          </div>
+          <div id="wiki-editor" class="hidden">
+            <div class="wiki-editor-header">
+              <input type="text" id="wiki-ed-title" placeholder="Article title" class="wiki-ed-title-input" />
+              <input type="text" id="wiki-ed-tags" placeholder="Tags: comma-separated" class="wiki-ed-tags-input" />
+            </div>
+            <textarea id="wiki-ed-body" class="wiki-ed-body" placeholder="Write in Markdown…"></textarea>
+            <div class="wiki-editor-actions">
+              <button class="btn btn-primary" id="wiki-ed-save-btn">💾 Save</button>
+              <button class="btn" id="wiki-ed-cancel-btn">Cancel</button>
+            </div>
+          </div>
+          <p class="text-dim" id="wiki-content-hint">Select an article to read.</p>
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- Module: AI Assistant -->
+    <section id="module-ai" class="module hidden">
+      <div id="ai-setup-banner" class="ai-setup-banner hidden">
+        <span data-i18n="ai_no_key">⚙️ No Claude API key configured.</span>
+        <button class="btn btn-sm btn-primary" id="ai-setup-btn" data-i18n="ai_configure_key">Configure key</button>
+      </div>
+      <div class="ai-chat-layout">
+        <!-- Conversations sidebar -->
+        <aside class="ai-conv-sidebar">
+          <div class="conv-sidebar-header">
+            <span data-i18n="ai_conversations">Conversations</span>
+            <button class="btn btn-sm btn-primary" id="conv-new-btn">＋</button>
+          </div>
+          <div id="conv-list" class="conv-list"></div>
+        </aside>
+        <!-- Chat area -->
+        <div class="ai-chat-main">
+          <div class="chat-toolbar">
+            <button id="wiki-interview-btn" class="btn btn-sm btn-outline" title="Start Wiki Interview Mode — AI will ask you questions and document your answers">
+              📖 Wiki Interview
+            </button>
+          </div>
+          <div id="chat-messages" class="chat-messages"></div>
+          <div class="chat-input-row">
+            <textarea id="chat-input" class="chat-input" rows="2"
+              placeholder="Ask about the network, servers, printers, wiki…"
+              data-i18n-placeholder="ai_placeholder"></textarea>
+            <button id="chat-send-btn" class="btn btn-primary chat-send-btn">➤</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Module: Energy -->
+    <section id="module-energy" class="module hidden">
+      <div class="energy-summary-grid" id="energy-summary"></div>
+      <div class="energy-settings-bar hidden" id="energy-settings-bar">
+        <label data-i18n="energy_price_label">Price €/kWh:</label>
+        <input type="number" id="energy-price-input" step="0.001" min="0" style="width:90px">
+        <button class="btn btn-sm btn-primary" id="energy-price-save" data-i18n="link_save">Save</button>
+      </div>
+      <div id="energy-table-wrap"></div>
+    </section>
+
+    <!-- Module: Settings (portal admin only) -->
+    <section id="module-settings" class="module hidden">
+      <div class="settings-grid">
+
+        <div class="settings-card">
+          <h3>General</h3>
+          <div class="form-group">
+            <label>Portal name</label>
+            <input type="text" id="setting-portal-name" />
+          </div>
+          <div class="form-group">
+            <label>Portal admin AD group</label>
+            <input type="text" id="setting-admin-group" placeholder="Portal-Admin" />
+          </div>
+          <div class="form-group">
+            <label>Default language</label>
+            <select id="setting-lang">
+              <option value="en">English</option>
+              <option value="es">Español</option>
+              <option value="ca">Català</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="module-settings-cards">
+          <!-- Per-module cards injected by JS -->
+        </div>
+
+      </div>
+      <div class="settings-actions">
+        <button class="btn btn-primary" id="settings-save-btn">💾 Save settings</button>
+        <span id="settings-status" class="text-dim"></span>
+      </div>
+
+      <!-- LDAP test tool -->
+      <div class="settings-card" id="ldap-test-card" style="margin-top:1.5rem">
+        <h3>🔌 Test AD / LDAP login</h3>
+        <p class="text-dim" style="margin-bottom:.75rem">Enter any domain credentials to verify authentication and see the groups returned by the DC.</p>
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="ldap-test-user" placeholder="user or user@domain.local" autocomplete="off" />
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="ldap-test-pass" autocomplete="new-password" />
+        </div>
+        <button class="btn btn-primary" id="ldap-test-btn">Test</button>
+        <pre id="ldap-test-result" class="ldap-test-result hidden"></pre>
+      </div>
+
+    </section>
+
+    <!-- Module: Workstations -->
+    <section id="module-workstations" class="module hidden">
+
+      <!-- Centers bar (tabs) -->
+      <div class="ws-centers-bar" id="ws-centers-bar">
+        <div class="ws-center-tabs" id="ws-center-tabs"></div>
+        <button class="btn btn-sm btn-primary ws-admin-only hidden" id="ws-add-center-btn">➕ Centro</button>
+      </div>
+
+      <!-- Toolbar -->
+      <div class="toolbar">
+        <button class="btn btn-sm" id="ws-refresh-btn">🔄 Comprobar estado</button>
+        <button class="btn btn-sm btn-primary ws-admin-only hidden" id="ws-add-workstation-btn">➕ Añadir equipo</button>
+        <span id="ws-ping-status" class="text-dim"></span>
+      </div>
+
+      <!-- Workstation grid -->
+      <div id="ws-grid" class="ws-grid"></div>
+      <p id="ws-empty" class="text-dim hidden">No hay equipos en este centro.</p>
+
+      <!-- Center form modal -->
+      <div id="ws-center-modal" class="overlay hidden">
+        <div class="modal modal-sm">
+          <div class="modal-header">
+            <h2 id="ws-center-modal-title">Centro</h2>
+            <button class="btn btn-sm" id="ws-center-modal-close">✕</button>
+          </div>
+          <div class="form-group">
+            <label>Nombre *</label>
+            <input type="text" id="wscm-name" placeholder="Recepción" />
+          </div>
+          <div class="form-group">
+            <label>Ubicación</label>
+            <input type="text" id="wscm-location" placeholder="Planta 1, Ala Norte" />
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-primary" id="ws-center-modal-save">Guardar</button>
+            <button class="btn" id="ws-center-modal-cancel">Cancelar</button>
+            <button class="btn btn-danger ws-admin-only hidden" id="ws-center-modal-delete">Eliminar centro</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Workstation form modal -->
+      <div id="ws-workstation-modal" class="overlay hidden">
+        <div class="modal modal-wide">
+          <div class="modal-header">
+            <h2 id="ws-wm-title">Equipo</h2>
+            <button class="btn btn-sm" id="ws-wm-close">✕</button>
+          </div>
+          <div class="server-form-grid">
+            <div class="form-group">
+              <label>Nombre *</label>
+              <input type="text" id="wswm-name" placeholder="PC-RECEPCION-01" />
+            </div>
+            <div class="form-group">
+              <label>IP</label>
+              <input type="text" id="wswm-ip" placeholder="192.168.1.50" />
+            </div>
+            <div class="form-group">
+              <label>Sistema operativo</label>
+              <select id="wswm-os">
+                <option value="windows">🪟 Windows</option>
+                <option value="linux">🐧 Linux</option>
+                <option value="macos">🍎 macOS</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Usuario asignado</label>
+              <input type="text" id="wswm-user" placeholder="Juan García" />
+            </div>
+            <div class="form-group">
+              <label>RAM (GB)</label>
+              <input type="number" id="wswm-ram" placeholder="16" min="1" />
+            </div>
+            <div class="form-group">
+              <label>Procesador</label>
+              <input type="text" id="wswm-cpu" placeholder="Intel Core i5-12400" />
+            </div>
+            <div class="form-group">
+              <label>Disco (GB)</label>
+              <input type="number" id="wswm-disk" placeholder="512" min="1" />
+            </div>
+            <div class="form-group">
+              <label>Notas</label>
+              <input type="text" id="wswm-notes" placeholder="Observaciones…" />
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-primary" id="ws-wm-save">Guardar</button>
+            <button class="btn" id="ws-wm-cancel">Cancelar</button>
+            <button class="btn btn-danger ws-admin-only hidden" id="ws-wm-delete">Eliminar</button>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+</div>
+
+<!-- SSH Terminal modal -->
+<div id="ssh-overlay" class="overlay hidden">
+  <div class="modal modal-terminal">
+    <div class="modal-header">
+      <h2 id="ssh-modal-title">SSH Terminal</h2>
+      <div style="display:flex;gap:10px;align-items:center">
+        <span id="ssh-conn-status" class="text-dim"></span>
+        <button class="btn btn-sm" id="ssh-close-btn">✕</button>
+      </div>
+    </div>
+    <div id="ssh-terminal-container"></div>
+  </div>
+</div>
+
+<!-- Audit modal -->
+<div id="audit-overlay" class="overlay hidden">
+  <div class="modal modal-wide">
+    <div class="modal-header">
+      <h2>Audit Log</h2>
+      <button class="btn btn-sm" id="audit-close-btn">✕</button>
+    </div>
+    <div class="audit-filters">
+      <input type="text" id="audit-event-filter" placeholder="Event…" />
+      <input type="text" id="audit-user-filter" placeholder="User…" />
+      <input type="text" id="audit-text-filter" placeholder="Contains…" />
+      <button class="btn btn-sm btn-primary" id="audit-apply-btn">Filter</button>
+    </div>
+    <table id="audit-table">
+      <thead><tr><th>Time</th><th>User</th><th>Event</th><th>Server</th><th>IP</th><th>OK</th></tr></thead>
+      <tbody id="audit-body"></tbody>
+    </table>
+    <pre id="audit-detail"></pre>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast-container"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<!-- draw.io diagram viewer -->
+<script type="text/javascript" src="https://viewer.diagrams.net/js/viewer-static.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

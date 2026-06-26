@@ -14,16 +14,30 @@ leave 'ssh_password_env' as None and set 'ssh_key_path'.
 """
 
 SERVERS = [
+    # --- Cobaltax Principal (192.168.23.0/24) — Servers ---
+    {
+        'name': 'esxi-host.local',
+        'ip': '192.168.23.49',
+        'ssh_user': 'root',
+        'ssh_password_env': 'SSH_PASS_ESXI',
+        'ssh_key_path': None,
+        'ssh_port': 22,
+        'os_type': 'esxi',
+        'subnet': 'cobaltax_main',
+        'watts_idle': 40,   # PowerEdge T20 (Xeon E3-1200 v3, desktop-class, very efficient)
+        'watts_max': 130,
+    },
     {
         'name': 'ubutwo.cobaltax.local',
         'ip': '192.168.23.42',
         'ssh_user': 'administrador',
-        # env var holding password (optional)
         'ssh_password_env': 'SSH_PASS_UBUTWO',
         'ssh_key_path': None,
         'ssh_port': 22,
         'os_type': 'linux',
-        'parent': '192.168.23.49'
+        'parent': '192.168.23.49',
+        'subnet': 'cobaltax_main',
+        'watts_idle': 0, 'watts_max': 0,  # VM inside ESXi T20 — power counted in host
     },
     {
         'name': 'ubuntuserver.cobaltax.local',
@@ -33,7 +47,19 @@ SERVERS = [
         'ssh_key_path': None,
         'ssh_port': 22,
         'os_type': 'linux',
-        'parent': '192.168.23.49'
+        'parent': '192.168.23.49',
+        'subnet': 'cobaltax_main',
+        'watts_idle': 0, 'watts_max': 0,  # VM inside ESXi T20 — power counted in host
+    },
+    {
+        'name': 'Windows PC (192.168.23.48)',
+        'ip': '192.168.23.48',
+        'ssh_user': None,
+        'ssh_password_env': None,
+        'ssh_key_path': None,
+        'ssh_port': None,
+        'os_type': 'windows',
+        'subnet': 'cobaltax_main',
     },
     {
         'name': 'WIN-K781E2RUC5K.cobaltax.local (MURANO)',
@@ -42,23 +68,67 @@ SERVERS = [
         'ssh_password_env': 'SSH_PASS_MURANO',
         'ssh_key_path': None,
         'ssh_port': 22,
-        'os_type': 'windows'
+        'os_type': 'windows',
+        'subnet': 'cobaltax_main',
+        'watts_idle': 65,   # PowerEdge R240
+        'watts_max': 175,
     },
     {
-        'name': 'esxi-host.local',
-        'ip': '192.168.23.49',
+        'name': 'ciserver.cobaltax.local',
+        'ip': '192.168.23.201',
         'ssh_user': 'root',
-        'ssh_password_env': 'SSH_PASS_ESXI',
+        'ssh_password_env': 'SSH_PASS_CISERVER',
         'ssh_key_path': None,
         'ssh_port': 22,
-        'os_type': 'esxi'
-    }
+        'os_type': 'synology',
+        'subnet': 'cobaltax_main',
+        'watts_idle': 25,   # HP MicroServer Gen8 G1610T (Celeron 35W TDP, very efficient)
+        'watts_max': 65,
+    },
+    # --- Cobaltax Principal — Network Devices ---
+    {
+        'name': 'Orange Router (Gateway)',
+        'ip': '192.168.23.200',
+        'ssh_user': None,
+        'ssh_password_env': None,
+        'ssh_key_path': None,
+        'ssh_port': None,
+        'os_type': 'router',
+        'subnet': 'cobaltax_main',
+        'web_url': 'http://192.168.23.200/',
+    },
+    {
+        'name': 'Ciagrei AP',
+        'ip': '192.168.23.199',
+        'ssh_user': None,
+        'ssh_password_env': None,
+        'ssh_key_path': None,
+        'ssh_port': None,
+        'os_type': 'ap',
+        'subnet': 'cobaltax_main',
+        'web_url': 'http://192.168.23.199/',
+    },
+    # --- Cobaltax Tienda (192.168.9.0/24) — Network Devices ---
+    {
+        'name': 'Router Tienda',
+        'ip': '192.168.9.1',
+        'ssh_user': None,
+        'ssh_password_env': None,
+        'ssh_key_path': None,
+        'ssh_port': None,
+        'os_type': 'router',
+        'subnet': 'cobaltax_tienda',
+        'web_url': 'http://192.168.9.1/',
+    },
 ]
 
 # Monitoring settings
 PING_TIMEOUT = 3  # Timeout for ping in seconds
 REFRESH_INTERVAL = 30  # Auto-refresh interval in seconds
 SSH_TIMEOUT = 10  # SSH connection timeout in seconds
+# Additional SSH handshake tuning
+SSH_BANNER_TIMEOUT = int(os.environ.get('SSH_BANNER_TIMEOUT', '10'))  # time to wait for SSH banner
+SSH_AUTH_TIMEOUT = int(os.environ.get('SSH_AUTH_TIMEOUT', '10'))      # time to wait for auth response
 
 # GUI settings
 WINDOW_TITLE = "Cobaltax Server Monitor"

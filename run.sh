@@ -1,49 +1,46 @@
 #!/bin/bash
 
-# CobaltaX Server Monitor Setup Script
+# CobaltaX Server Monitor — web edition
 # Do NOT place secrets directly in this file. Use a .env file instead.
-#This iniitializes the sqlite with the .env parames
-#python scripts/init_from_env.py --env-file _.env
-#
 set -euo pipefail
 
-# Load dotenv if present (prefer .env else fallback to _.env legacy filename)
-ENV_FILE=""
-if [ -f .env ]; then
-	ENV_FILE=".env"
-elif [ -f _.env ]; then
-	ENV_FILE="_.env"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Load dotenv safely (supports inline comments, quoted values)
+for ENV_FILE in .env .env.cobaltax _.env; do
+  if [ -f "$SCRIPT_DIR/$ENV_FILE" ]; then
+    echo "Loading environment from $ENV_FILE"
+    while IFS= read -r line || [ -n "$line" ]; do
+      line="${line%%#*}"
+      line="${line#"${line%%[![:space:]]*}"}"
+      line="${line%"${line##*[![:space:]]}"}"
+      [ -z "$line" ] && continue
+      [[ "$line" != *=* ]] && continue
+      key="${line%%=*}"
+      val="${line#*=}"
+      val="${val#\"}" ; val="${val%\"}"
+      val="${val#\'}" ; val="${val%\'}"
+      export "$key=$val"
+    done < "$SCRIPT_DIR/$ENV_FILE"
+  fi
+done
+
+# Resolve runner: prefer uv, then .venv, then system python3
+if command -v uv &>/dev/null; then
+  echo "Using uv — syncing environment..."
+  uv sync --quiet
+  echo "Starting CobaltaX Server Monitor web interface..."
+  echo "Open http://localhost:8080 in your browser."
+  exec uv run python "$SCRIPT_DIR/main.py" "$@"
+elif [ -x "$SCRIPT_DIR/.venv/bin/python" ]; then
+  echo "Starting CobaltaX Server Monitor web interface..."
+  echo "Open http://localhost:8080 in your browser."
+  exec "$SCRIPT_DIR/.venv/bin/python" "$SCRIPT_DIR/main.py" "$@"
+elif command -v python3 &>/dev/null; then
+  echo "Starting CobaltaX Server Monitor web interface..."
+  echo "Open http://localhost:8080 in your browser."
+  exec python3 "$SCRIPT_DIR/main.py" "$@"
+else
+  echo "ERROR: no Python found. Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+  exit 1
 fi
-if [ -n "$ENV_FILE" ]; then
-	echo "Loading environment from $ENV_FILE"
-	set -o allexport
-	# shellcheck disable=SC1091
-	. "./$ENV_FILE"
-	set +o allexport
-fi
-
-# Auto-seal Telegram settings into secure store if not already present
-python - <<'PYEOF'
-import os, sys
-missing=False
-try:
-		from secure_config_store import get_setting, set_setting
-except Exception:
-		sys.exit(0)
-keys=['TELEGRAM_API_ID','TELEGRAM_API_HASH','TELEGRAM_CHAT_ID','TELEGRAM_DEFAULT_LIMIT','TELEGRAM_REFRESH_INTERVAL']
-for k in keys:
-		if get_setting(k) is None:
-				val=os.environ.get(k)
-				if val:
-						set_setting(k, val, secret= 'HASH' in k or 'API' in k or 'CHAT' in k)
-						print(f"[seal] Stored {k} into secure settings store.")
-				else:
-						if k in ('TELEGRAM_API_ID','TELEGRAM_API_HASH','TELEGRAM_CHAT_ID'): missing=True
-if missing:
-		print("[seal] Telegram core credentials incomplete; you can enter them interactively in the UI.")
-PYEOF
-
-echo "Optionally run: python scripts/telegram_login.py (first time to create session)"
-
-echo "🎯 Starting Server Monitor..."
-python server_monitor.py

@@ -16,6 +16,13 @@ import urllib.error
 from datetime import datetime
 import os
 import asyncio
+import logging
+
+# Suppress overly verbose Paramiko thread tracebacks in UI; keep errors minimal
+try:
+    logging.getLogger('paramiko').setLevel(logging.ERROR)
+except Exception:
+    pass
 
 # Optional Telethon fallback for history access
 try:
@@ -74,6 +81,19 @@ def telethon_fetch_history(chat_id, limit=50, timeout=10.0):
     return _get_entity_and_messages(chat_id, limit=limit, timeout=timeout)
 
 
+def _fmt_uptime(seconds: float) -> str:
+    """Convert uptime in seconds to a human-readable string like '5d 2h' or '3h 25m'."""
+    s = int(seconds)
+    days  = s // 86400
+    hours = (s % 86400) // 3600
+    mins  = (s % 3600)  // 60
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {mins}m"
+    return f"{mins}m"
+
+
 class ServerMonitor:
     """Lightweight network reachability monitor (ping + port)."""
 
@@ -125,6 +145,11 @@ class ServerMonitor:
         status['ping_success'] = status['ping']
         if not status['ping']:
             return status
+        # Network devices (routers, APs, switches) are ping-only — no SSH
+        _net_types = ('router', 'ap', 'switch', 'network_device')
+        if server_config.get('os_type') in _net_types or not server_config.get('ssh_port'):
+            status['online'] = True
+            return status
         # Try SSH quick connect for deeper metrics
         ssh_mgr = SSHManager(timeout=5)
         client, err = ssh_mgr.create_ssh_client(server_config)
@@ -149,10 +174,34 @@ class ServerMonitor:
 class SSHManager:
     """Encapsulates SSH connectivity, commands, resource collection, and restarts."""
 
-    def __init__(self, timeout: int = 10):
+    def __init__(self, timeout: int = 10, banner_timeout: int = 5, auth_timeout: int = 5):
         self.timeout = timeout
+        self.banner_timeout = banner_timeout
+        self.auth_timeout = auth_timeout
 
     # ---------- Connection ----------
+    def _create_esxi_client(self, ip: str, user: str, password: str, port: int) -> Tuple[Any, str]:
+        """SSH client for ESXi using legacy algorithms it requires."""
+        sock = socket.create_connection((ip, port), timeout=self.timeout)
+        # disabled_algorithms={} re-enables diffie-hellman-group1-sha1 and ssh-rsa
+        # which Paramiko disables by default but ESXi still uses.
+        t = paramiko.Transport(sock, disabled_algorithms={})
+        t._preferred_kex = (
+            'diffie-hellman-group1-sha1',
+            'diffie-hellman-group14-sha1',
+            'diffie-hellman-group14-sha256',
+        )
+        t._preferred_keys = ('ssh-rsa', 'ecdsa-sha2-nistp256', 'ssh-ed25519')
+        t._preferred_ciphers = (
+            'aes128-cbc', 'aes256-cbc', '3des-cbc',
+            'aes128-ctr', 'aes256-ctr', 'aes192-ctr',
+        )
+        t._preferred_macs = ('hmac-sha1', 'hmac-md5', 'hmac-sha2-256')
+        t.connect(username=user, password=password)
+        client = paramiko.SSHClient()
+        client._transport = t
+        return client, ''
+
     def create_ssh_client(self, server_config: Dict[str, Any]) -> Tuple[Any, str]:
         ip = server_config.get('ip')
         user = server_config.get('ssh_user')
@@ -172,16 +221,27 @@ class SSHManager:
                 'username': user,
                 'timeout': self.timeout,
                 'port': port,
-                'banner_timeout': 5,
-                'auth_timeout': 5,
+                'banner_timeout': self.banner_timeout,
+                'auth_timeout': self.auth_timeout,
             }
             if key_path:
                 connect_args['key_filename'] = key_path
+                passphrase = server_config.get('ssh_key_passphrase')
+                if passphrase:
+                    connect_args['passphrase'] = passphrase
             else:
                 connect_args['password'] = password
+                connect_args['look_for_keys'] = False
+                connect_args['allow_agent'] = False
             client.connect(**connect_args)
             return client, ''
         except Exception as e:
+            # ESXi 5/6 rejects modern algorithms — retry with legacy cipher suite
+            if server_config.get('os_type') == 'esxi' and not key_path:
+                try:
+                    return self._create_esxi_client(ip, user, password, port)
+                except Exception as e2:
+                    return None, str(e2)
             return None, str(e)
 
     # ---------- Restart ----------
@@ -289,25 +349,15 @@ class SSHManager:
         return False, "All Windows restart commands failed. Check user privileges and server configuration."
 
     def get_system_resources(self, server_config: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Get system resource information (CPU, RAM, Disk).
-
-        Args:
-            server_config: Server configuration dictionary
-
-        Returns:
-            Dictionary with resource information
-        """
         client, error = self.create_ssh_client(server_config)
-
         if not client:
             return {'error': f"SSH connection failed: {error}"}
-
         try:
             os_type = server_config.get('os_type', 'linux').lower()
-
             if os_type == 'windows':
                 return self._get_windows_resources(client)
+            elif os_type == 'synology':
+                return self._get_synology_resources(client)
             else:
                 return self._get_linux_resources(client)
 
@@ -327,9 +377,9 @@ class SSHManager:
             )
             cpu_usage = stdout.read().decode('utf-8').strip()
             try:
-                resources['cpu_usage'] = float(cpu_usage.replace('%', ''))
+                resources['cpu_percent'] = float(cpu_usage.replace('%', ''))
             except:
-                resources['cpu_usage'] = 0.0
+                resources['cpu_percent'] = 0.0
 
             # Memory Usage
             stdin, stdout, stderr = client.exec_command(
@@ -338,11 +388,11 @@ class SSHManager:
             )
             mem_info = stdout.read().decode('utf-8').strip().split()
             if len(mem_info) >= 3:
-                resources['memory_usage'] = float(mem_info[0])
+                resources['mem_percent'] = float(mem_info[0])
                 resources['memory_used_gb'] = float(mem_info[1])
                 resources['memory_total_gb'] = float(mem_info[2])
             else:
-                resources['memory_usage'] = 0.0
+                resources['mem_percent'] = 0.0
                 resources['memory_used_gb'] = 0.0
                 resources['memory_total_gb'] = 0.0
 
@@ -361,17 +411,17 @@ class SSHManager:
                     resources['disk_used'] = f"{used_kb/1024/1024:.1f}GB"
                     resources['disk_total'] = f"{total_kb/1024/1024:.1f}GB"
                     resources['disk_free'] = f"{free_kb/1024/1024:.1f}GB"
-                    resources['disk_usage'] = usage_pct
+                    resources['disk_percent'] = usage_pct
                 except Exception:
                     resources['disk_used'] = '0GB'
                     resources['disk_total'] = '0GB'
                     resources['disk_free'] = '0GB'
-                    resources['disk_usage'] = 0.0
+                    resources['disk_percent'] = 0.0
             else:
                 resources['disk_used'] = '0GB'
                 resources['disk_total'] = '0GB'
                 resources['disk_free'] = '0GB'
-                resources['disk_usage'] = 0.0
+                resources['disk_percent'] = 0.0
 
             # Load Average
             stdin, stdout, stderr = client.exec_command(
@@ -379,10 +429,14 @@ class SSHManager:
             load_avg = stdout.read().decode('utf-8').strip()
             resources['load_average'] = load_avg
 
-            # Uptime
-            stdin, stdout, stderr = client.exec_command("uptime -p", timeout=5)
-            uptime = stdout.read().decode('utf-8').strip()
-            resources['uptime'] = uptime
+            # Uptime via /proc/uptime (reliable cross-distro)
+            stdin, stdout, stderr = client.exec_command("cat /proc/uptime", timeout=5)
+            uptime_raw = stdout.read().decode('utf-8').strip()
+            try:
+                secs = float(uptime_raw.split()[0])
+                resources['uptime'] = _fmt_uptime(secs)
+            except Exception:
+                resources['uptime'] = uptime_raw
 
             client.close()
             return resources
@@ -395,70 +449,68 @@ class SSHManager:
         """Get Windows system resources."""
         resources = {}
 
+        def _run(cmd: str, timeout: int = 10) -> str:
+            try:
+                _, stdout, _ = client.exec_command(cmd, timeout=timeout)
+                return stdout.read().decode('utf-8', errors='replace').strip()
+            except Exception:
+                return ''
+
         try:
-            # CPU Usage (PowerShell CIM)
-            stdin, stdout, stderr = client.exec_command(
-                'powershell -NoProfile -Command "(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average"',
-                timeout=10
+            # CPU
+            cpu_out = _run(
+                'powershell -NoProfile -Command "(Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average"'
             )
-            cpu_output = stdout.read().decode('utf-8').strip()
             try:
-                resources['cpu_usage'] = float(cpu_output)
+                resources['cpu_percent'] = round(float(cpu_out), 1)
             except Exception:
-                resources['cpu_usage'] = 0.0
+                resources['cpu_percent'] = 0.0
 
-            # Memory Usage (JSON)
-            stdin, stdout, stderr = client.exec_command(
-                'powershell -NoProfile -Command "Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize,FreePhysicalMemory | ConvertTo-Json -Compress"',
-                timeout=10
+            # Memory
+            mem_out = _run(
+                'powershell -NoProfile -Command "Get-CimInstance Win32_OperatingSystem | Select-Object TotalVisibleMemorySize,FreePhysicalMemory | ConvertTo-Json -Compress"'
             )
-            mem_output = stdout.read().decode('utf-8').strip()
             try:
-                mem_data = json.loads(mem_output)
-                total_kb = float(mem_data.get('TotalVisibleMemorySize', 0))
-                free_kb = float(mem_data.get('FreePhysicalMemory', 0))
-                used_kb = max(total_kb - free_kb, 0)
-                resources['memory_total_gb'] = total_kb/1024/1024
-                resources['memory_used_gb'] = used_kb/1024/1024
-                resources['memory_usage'] = (
-                    used_kb / total_kb * 100.0) if total_kb > 0 else 0.0
+                mem = json.loads(mem_out)
+                total_kb = float(mem.get('TotalVisibleMemorySize', 0))
+                free_kb  = float(mem.get('FreePhysicalMemory', 0))
+                used_kb  = max(total_kb - free_kb, 0)
+                resources['mem_percent']     = round(used_kb / total_kb * 100.0, 1) if total_kb else 0.0
+                resources['memory_total_gb'] = round(total_kb / 1024 / 1024, 2)
+                resources['memory_used_gb']  = round(used_kb  / 1024 / 1024, 2)
             except Exception:
-                resources['memory_usage'] = 0.0
-                resources['memory_used_gb'] = 0.0
-                resources['memory_total_gb'] = 0.0
+                resources['mem_percent'] = resources['memory_total_gb'] = resources['memory_used_gb'] = 0.0
 
-            # Disk Usage for C: (JSON)
-            stdin, stdout, stderr = client.exec_command(
-                'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID=\\\"C:\\\"\" | Select-Object Size,FreeSpace | ConvertTo-Json -Compress"',
-                timeout=10
+            # Disk — all fixed drives (DriveType 3), aggregated
+            # Use simplified Where-Object syntax to avoid brace-quoting issues over SSH
+            disk_out = _run(
+                'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk | Where-Object DriveType -eq 3 | Select-Object DeviceID,Size,FreeSpace | ConvertTo-Json -Compress"'
             )
-            disk_output = stdout.read().decode('utf-8').strip()
             try:
-                disk_data = json.loads(disk_output)
-                size_bytes = float(disk_data.get('Size', 0))
-                free_bytes = float(disk_data.get('FreeSpace', 0))
-                used_bytes = max(size_bytes - free_bytes, 0)
-                to_gb = 1024*1024*1024
-                resources['disk_total'] = f"{size_bytes/to_gb:.1f}GB"
-                resources['disk_free'] = f"{free_bytes/to_gb:.1f}GB"
-                resources['disk_used'] = f"{used_bytes/to_gb:.1f}GB"
-                resources['disk_usage'] = (
-                    used_bytes/size_bytes*100.0) if size_bytes > 0 else 0.0
+                raw = json.loads(disk_out)
+                if isinstance(raw, dict):   # single drive → wrap in list
+                    raw = [raw]
+                total_b = sum(float(d.get('Size', 0) or 0)      for d in raw)
+                free_b  = sum(float(d.get('FreeSpace', 0) or 0) for d in raw)
+                used_b  = max(total_b - free_b, 0)
+                GB = 1024 ** 3
+                resources['disk_total']   = f"{total_b / GB:.1f} GB"
+                resources['disk_free']    = f"{free_b  / GB:.1f} GB"
+                resources['disk_used']    = f"{used_b  / GB:.1f} GB"
+                resources['disk_percent'] = round(used_b / total_b * 100.0, 1) if total_b else 0.0
             except Exception:
-                resources['disk_used'] = '0GB'
-                resources['disk_total'] = '0GB'
-                resources['disk_free'] = '0GB'
-                resources['disk_usage'] = 0.0
+                resources['disk_total'] = resources['disk_free'] = resources['disk_used'] = '0 GB'
+                resources['disk_percent'] = 0.0
 
-            # Uptime
-            stdin, stdout, stderr = client.exec_command(
-                'powershell "(get-date) - (gcim Win32_OperatingSystem).LastBootUpTime"',
-                timeout=10
+            # Uptime — total seconds since last boot
+            uptime_secs = _run(
+                'powershell -NoProfile -Command "[math]::Round(((Get-Date)-(gcim Win32_OperatingSystem).LastBootUpTime).TotalSeconds)"'
             )
-            uptime_output = stdout.read().decode('utf-8').strip()
-            resources['uptime'] = uptime_output if uptime_output else 'Unknown'
-
-            resources['load_average'] = 'N/A (Windows)'
+            try:
+                resources['uptime'] = _fmt_uptime(float(uptime_secs))
+            except Exception:
+                resources['uptime'] = 'Unknown'
+            resources['load_average'] = 'N/A'
 
             client.close()
             return resources
@@ -466,6 +518,94 @@ class SSHManager:
         except Exception as e:
             client.close()
             return {'error': f"Failed to get Windows resources: {str(e)}"}
+
+    def _get_synology_resources(self, client: paramiko.SSHClient) -> Dict[str, Any]:
+        """Get Synology NAS resources via /proc files (BusyBox-safe) + df for volumes."""
+        resources: Dict[str, Any] = {}
+
+        def _run(cmd: str) -> str:
+            try:
+                _, stdout, _ = client.exec_command(cmd, timeout=5)
+                return stdout.read().decode('utf-8', errors='replace').strip()
+            except Exception:
+                return ''
+
+        def _hr_kb(kb: float) -> str:
+            if kb >= 1024 ** 3:
+                return f"{kb / 1024 ** 3:.1f} PB"
+            if kb >= 1024 ** 2:
+                return f"{kb / 1024 ** 2:.1f} TB"
+            return f"{kb / 1024:.1f} GB"
+
+        # CPU — load average (works on all BusyBox/DSM)
+        loadavg = _run("cat /proc/loadavg")
+        try:
+            load1 = float(loadavg.split()[0])
+            ncpu_str = _run("nproc 2>/dev/null || grep -c ^processor /proc/cpuinfo")
+            ncpu = max(int(ncpu_str), 1) if ncpu_str.isdigit() else 1
+            resources['cpu_percent'] = round(min(load1 / ncpu * 100, 100), 1)
+            resources['load_average'] = ' '.join(loadavg.split()[:3])
+        except Exception:
+            resources['cpu_percent'] = 0.0
+
+        # RAM — /proc/meminfo
+        meminfo = _run("cat /proc/meminfo")
+        try:
+            mi: Dict[str, int] = {}
+            for line in meminfo.splitlines():
+                parts = line.split()
+                if len(parts) >= 2:
+                    mi[parts[0].rstrip(':')] = int(parts[1])
+            total = mi.get('MemTotal', 0)
+            free  = mi.get('MemFree', 0)
+            buffers = mi.get('Buffers', 0)
+            cached  = mi.get('Cached', 0)
+            available = free + buffers + cached
+            used = total - available
+            resources['mem_percent']     = round(used / total * 100, 1) if total else 0.0
+            resources['memory_used_gb']  = round(used  / 1024 / 1024, 2)
+            resources['memory_total_gb'] = round(total / 1024 / 1024, 2)
+        except Exception:
+            resources['mem_percent'] = 0.0
+
+        # Volumes — df filtered to /volume*
+        df_out = _run("df -k 2>/dev/null | awk '$6 ~ /^\\/volume/ {print $6,$2,$3,$4,$5}'")
+        volumes = []
+        for line in df_out.splitlines():
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            try:
+                mount    = parts[0]
+                total_kb = float(parts[1])
+                used_kb  = float(parts[2])
+                free_kb  = float(parts[3])
+                pct      = float(parts[4].replace('%', ''))
+                volumes.append({
+                    'mount':   mount,
+                    'total':   _hr_kb(total_kb),
+                    'used':    _hr_kb(used_kb),
+                    'free':    _hr_kb(free_kb),
+                    'percent': pct,
+                })
+            except Exception:
+                continue
+
+        if volumes:
+            resources['volumes']      = volumes
+            resources['disk_percent'] = max(v['percent'] for v in volumes)
+        else:
+            resources['disk_percent'] = 0.0
+
+        # Uptime via /proc/uptime (BusyBox-safe)
+        uptime_raw = _run("cat /proc/uptime")
+        try:
+            resources['uptime'] = _fmt_uptime(float(uptime_raw.split()[0]))
+        except Exception:
+            resources['uptime'] = uptime_raw
+
+        client.close()
+        return resources
 
     def test_sudo_access(self, server_config: Dict[str, Any]) -> Tuple[bool, str]:
         """

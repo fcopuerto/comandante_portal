@@ -5,7 +5,7 @@ Monitor and manage Ubuntu servers on your local network.
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import ttk, messagebox, scrolledtext, simpledialog
 import threading
 import time
 from typing import Dict, List, Any
@@ -24,7 +24,7 @@ except ImportError:
 # Import local modules
 try:
     from config import SERVERS, PING_TIMEOUT, REFRESH_INTERVAL, SSH_TIMEOUT, WINDOW_TITLE, WINDOW_WIDTH, WINDOW_HEIGHT, DEFAULT_LANGUAGE, TELEGRAM_ENABLED, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, DEFAULT_THEME
-    from server_utils import ServerMonitor, SSHManager, async_operation, TelegramClient
+    from server_utils import ServerMonitor, SSHManager, async_operation, TelegramClient, telethon_start_background, telethon_fetch_history
     from language_manager import get_language_manager, _
 except ImportError as e:
     print(f"Error importing modules: {e}")
@@ -119,7 +119,12 @@ class ServerMonitorGUI:
 
         # Initialize monitoring components
         self.server_monitor = ServerMonitor(timeout=PING_TIMEOUT)
-        self.ssh_manager = SSHManager(timeout=SSH_TIMEOUT)
+        # Pull SSH banner/auth timeouts from config if available
+        try:
+            from config import SSH_BANNER_TIMEOUT, SSH_AUTH_TIMEOUT
+        except Exception:
+            SSH_BANNER_TIMEOUT, SSH_AUTH_TIMEOUT = 8, 8
+        self.ssh_manager = SSHManager(timeout=SSH_TIMEOUT, banner_timeout=SSH_BANNER_TIMEOUT, auth_timeout=SSH_AUTH_TIMEOUT)
 
         # Server status storage
         self.server_status = {}
@@ -520,6 +525,10 @@ class ServerMonitorGUI:
             # Buttons
             ttk.Button(controls, text="Load",
                        command=self.load_telegram_messages).pack(side=tk.LEFT)
+            ttk.Button(controls, text="Join Invite",
+                       command=self.join_telegram_invite).pack(side=tk.LEFT, padx=(4, 0))
+            ttk.Button(controls, text="Pick Chat",
+                       command=self.pick_telegram_chat).pack(side=tk.LEFT, padx=(4, 0))
             ttk.Button(controls, text="Full", command=self.load_telegram_full_history).pack(
                 side=tk.LEFT, padx=(4, 0))
             ttk.Button(controls, text="Test", command=self.send_telegram_test).pack(
@@ -1198,6 +1207,211 @@ class ServerMonitorGUI:
             if flt in (m.get('text') or '').lower():
                 out.append(m)
         return out
+
+    def join_telegram_invite(self):
+        """Prompt for a Telegram invite link/hash and attempt to join using the user session.
+
+        Uses the background Telethon runner (via server_utils) so the UI is not blocked.
+        """
+        if not TELEGRAM_ENABLED:
+            messagebox.showinfo("Telegram", "Telegram not configured.")
+            return
+
+        invite = simpledialog.askstring(
+            "Join Telegram Invite", "Enter invite link or hash (e.g. https://t.me/joinchat/AAAA... or +AAAA...):",
+            parent=self.root)
+        if not invite:
+            return
+
+        self._set_tel_status("joining…", 'orange')
+
+        def worker():
+            try:
+                client, loop = telethon_start_background()
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror("Telegram", f"Cannot start Telethon: {e}"))
+                self._set_tel_status("error", 'red')
+                return
+
+            import asyncio
+            try:
+                from telethon.tl.functions.messages import ImportChatInviteRequest
+                from telethon.tl.functions.channels import JoinChannelRequest
+            except Exception:
+                # Telethon internals not available
+                pass
+
+            # First ensure this is a USER session, not a bot
+            async def _check_user():
+                try:
+                    me = await client.get_me()
+                    return getattr(me, 'bot', False)
+                except Exception:
+                    return None
+            fut_chk = asyncio.run_coroutine_threadsafe(_check_user(), loop)
+            try:
+                is_bot = fut_chk.result(timeout=10)
+            except Exception:
+                is_bot = None
+            if is_bot is True:
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Telegram",
+                    "The active session is a BOT. Join Invite requires a USER session.\n\n"
+                    "Fix: Close the app, delete ~/.cobaltax/cobaltax_user_session*, then run\n"
+                    "  python3 scripts/telegram_login.py\n"
+                    "and log in with your phone number."
+                ))
+                self._set_tel_status("bot session", 'red')
+                return
+
+            async def _do_join():
+                try:
+                    h = invite.strip()
+                    # Normalize common permalink forms
+                    if 't.me/' in h:
+                        h = h.split('/')[-1]
+                    if 'joinchat/' in h:
+                        h = h.split('joinchat/')[-1]
+                    if h.startswith('+'):
+                        h = h[1:]
+
+                    # First try ImportChatInviteRequest (hash-like invites)
+                    try:
+                        if h and not h.startswith('-') and not h.isdigit():
+                            await client(ImportChatInviteRequest(h))
+                            return True, f"Imported invite {h}"
+                    except Exception:
+                        # fall through to JoinChannel attempt
+                        pass
+
+                    # Try to resolve entity and join channel/group
+                    try:
+                        ent = await client.get_entity(invite.strip())
+                        await client(JoinChannelRequest(ent))
+                        return True, f"Joined {getattr(ent, 'title', str(ent))}"
+                    except Exception as e:
+                        return False, str(e)
+                except Exception as e:
+                    return False, str(e)
+
+            fut = asyncio.run_coroutine_threadsafe(_do_join(), loop)
+            try:
+                ok, msg = fut.result(timeout=20)
+            except Exception as e:
+                ok, msg = False, str(e)
+
+            if ok:
+                self.root.after(0, lambda: messagebox.showinfo("Telegram", f"Join succeeded: {msg}"))
+                self._set_tel_status("joined", 'green')
+                self.root.after(0, lambda: self.load_telegram_messages(silent=True))
+            else:
+                self.root.after(0, lambda: messagebox.showerror("Telegram", f"Join failed: {msg}"))
+                self._set_tel_status("error", 'red')
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def pick_telegram_chat(self):
+        """List dialogs from the user session and allow picking one to save as TELEGRAM_CHAT_ID.
+
+        Saves selection into the encrypted settings store and updates runtime variable.
+        """
+        if not TELEGRAM_ENABLED:
+            messagebox.showinfo("Telegram", "Telegram not configured.")
+            return
+
+        self._set_tel_status("listing…", 'blue')
+
+        def worker():
+            try:
+                client, loop = telethon_start_background()
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror("Telegram", f"Cannot start Telethon: {e}"))
+                self._set_tel_status("error", 'red')
+                return
+
+            import asyncio
+
+            # Verify this is a USER session (not bot) before listing dialogs
+            async def _check_user():
+                try:
+                    me = await client.get_me()
+                    return getattr(me, 'bot', False)
+                except Exception:
+                    return None
+            fut_chk = asyncio.run_coroutine_threadsafe(_check_user(), loop)
+            try:
+                is_bot = fut_chk.result(timeout=10)
+            except Exception:
+                is_bot = None
+            if is_bot is True:
+                self.root.after(0, lambda: messagebox.showerror(
+                    "Telegram",
+                    "The active session is a BOT. Picking dialogs requires a USER session.\n\n"
+                    "Fix: Close the app, delete ~/.cobaltax/cobaltax_user_session*, then run\n"
+                    "  python3 scripts/telegram_login.py\n"
+                    "and log in with your phone number."
+                ))
+                self._set_tel_status("bot session", 'red')
+                return
+
+            async def _gather():
+                try:
+                    dialogs = await client.get_dialogs(limit=200)
+                    return dialogs
+                except Exception:
+                    return []
+
+            fut = asyncio.run_coroutine_threadsafe(_gather(), loop)
+            try:
+                dialogs = fut.result(timeout=15)
+            except Exception:
+                dialogs = []
+
+            entries = []
+            ids = []
+            for d in dialogs:
+                ent = d.entity
+                title = getattr(ent, 'title', None) or getattr(ent, 'username', None) or str(ent)
+                base_id = getattr(ent, 'id', None)
+                if base_id is None:
+                    continue
+                full_id = f"-100{base_id}" if ent.__class__.__name__ == 'Channel' else str(base_id)
+                entries.append(f"{title} — {full_id}")
+                ids.append(full_id)
+
+            def show_picker():
+                top = tk.Toplevel(self.root)
+                top.title("Pick Telegram Chat")
+                top.geometry("480x320")
+                lb = tk.Listbox(top)
+                lb.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+                for e in entries:
+                    lb.insert(tk.END, e)
+
+                def on_ok():
+                    sel = lb.curselection()
+                    if not sel:
+                        messagebox.showwarning("Pick Chat", "No selection")
+                        return
+                    chosen = ids[sel[0]]
+                    try:
+                        _secure_set_setting('TELEGRAM_CHAT_ID', chosen)
+                    except Exception:
+                        pass
+                    globals()['TELEGRAM_CHAT_ID'] = chosen
+                    messagebox.showinfo("Telegram", f"Saved chat id: {chosen}")
+                    top.destroy()
+                    self.load_telegram_messages(silent=True)
+
+                btnf = ttk.Frame(top)
+                btnf.pack(fill=tk.X, padx=6, pady=(0, 6))
+                ttk.Button(btnf, text="OK", command=on_ok).pack(side=tk.RIGHT)
+                ttk.Button(btnf, text="Cancel", command=top.destroy).pack(side=tk.RIGHT, padx=(0, 6))
+
+            self.root.after(0, show_picker)
+            self._set_tel_status("dialogs loaded", 'green')
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def telegram_fetch_via_user_session(self, limit: int, full: bool):
         """Fetch messages using Telethon user session (cobaltax_user_session)."""

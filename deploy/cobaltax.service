@@ -1,0 +1,31 @@
+[Unit]
+Description=CobaltaX Server Monitor (web)
+Documentation=https://github.com/fcopuerto/network-monitor-comander
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cobaltax
+Group=cobaltax
+WorkingDirectory=/opt/cobaltax
+EnvironmentFile=-/opt/cobaltax/.env
+ExecStart=/opt/cobaltax/.venv/bin/python main.py --host=127.0.0.1 --port=8080
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/opt/cobaltax/.cobaltax
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cobaltax
+
+[Install]
+WantedBy=multi-user.target
